@@ -12,7 +12,7 @@ cd /path/to/ncqqpy && python -B tests/test_todo.py
 
 | 套件 | 覆盖 |
 |------|------|
-| `test_todo.py` |  |
+| `test_todo.py` | 插件验收：ORM / 6 字段 / deadline+日报 / AI 工具 / 表达式 / 分页 / 完成重开 |
 
 ## 说明
 

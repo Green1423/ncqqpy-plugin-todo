@@ -27,6 +27,7 @@ from napcat.models import MessageEvent
 from napcat.permission import PermissionManager
 from napcat.plugin import PluginManager
 from napcat.store import Database
+from napcat.tools import call_tool
 
 from plugins.todo import schedule
 from plugins.todo.store import Todo, import_legacy_json
@@ -430,6 +431,58 @@ async def test_learn_syntax() -> None:
         await env.close()
 
 
+async def test_ai_tools() -> None:
+    print("\n[4.3] AI tools")
+    env = Env(page_size=10)
+    try:
+        await env.start()
+        reg = env.plugin.plugin_tools
+        names = {item.name for item in reg.list(exclude="ai_chat")}
+        check("注册 5 个 todo 工具", {
+            "todo.add", "todo.list", "todo.set", "todo.check", "todo.del",
+        } <= names, str(names))
+
+        ctx = SimpleNamespace(in_group=False, user_id=SUPERUSER,
+                              chat_id=SUPERUSER, group_id=None,
+                              is_superuser=True)
+        text = await call_tool(reg.get("todo.add"), {
+            "title": "AI 待办",
+            "deadline": "2026-11-10 18:00",
+        }, ctx)
+        check("tool add 成功", "已添加待办" in text, text)
+        todo = env.model().objects.filter(title="AI 待办").first()
+        check("tool add 写入 deadline", todo.deadline is not None,
+              repr(todo.deadline))
+
+        text = await call_tool(reg.get("todo.list"), {}, ctx)
+        check("tool list 返回编号和截止",
+              f"#{todo.pk}" in text and "截止=" in text, text)
+
+        text = await call_tool(reg.get("todo.set"), {
+            "id": todo.pk, "deadline": "false", "repeat": "1w",
+        }, ctx)
+        check("tool set 清 deadline 并设 repeat",
+              "重复规则：1w" in text and "截止时间：无" in text, text)
+        text = await call_tool(reg.get("todo.set"), {
+            "id": todo.pk, "deadline": "2026-11-12 18:00",
+        }, ctx)
+        check("tool set 仍执行互斥", "互斥" in text, text)
+
+        text = await call_tool(reg.get("todo.check"), {"id": todo.pk}, ctx)
+        check("tool check 完成", "已完成待办" in text, text)
+        text = await call_tool(reg.get("todo.del"), {"id": todo.pk}, ctx)
+        check("tool del 删除", "已删除待办" in text, text)
+
+        denied_ctx = SimpleNamespace(in_group=False, user_id=20002,
+                                     chat_id=20002, group_id=None,
+                                     is_superuser=False)
+        text = await call_tool(reg.get("todo.add"), {"title": "越权"},
+                                denied_ctx)
+        check("tool 仍受服务范围限制", "没有开通" in text, text)
+    finally:
+        await env.close()
+
+
 async def test_deadline_summary() -> None:
     print("\n[4.2] deadline / 每日日报")
     env = Env(page_size=10)
@@ -671,6 +724,7 @@ async def main() -> int:
     await test_pagination()
     await test_learn_syntax()
     await test_deadline_summary()
+    await test_ai_tools()
 
     print(f"\n{'=' * 44}\n通过 {PASSED} / 失败 {FAILED}")
     return 1 if FAILED else 0

@@ -34,6 +34,7 @@ except ImportError:  # 旧框架的兼容名
     from napcat.scope import Scope as Subscription
 
 from . import render
+from . import tools as todo_tools
 from .commands import todo as todo_cmd
 from .jobs import reminder as reminder_job
 from .jobs import summary as summary_job
@@ -48,7 +49,7 @@ class TodoPlugin(PluginBase):
     """待办 + 周期提醒。"""
 
     name = "todo"
-    version = "2.1.0"
+    version = "2.2.0"
     description = "待办、周期提醒、截止时间与每日日报（时间规则表达式）"
     author = "ncqqpy"
 
@@ -89,6 +90,10 @@ class TodoPlugin(PluginBase):
         self._visibility_filter = None
         self._command_names: list[str] = []
         self._denied: dict[int, tuple[float, int]] = {}
+        try:
+            todo_tools.register(self)
+        except Exception:  # noqa: BLE001 - 工具是增强，不能让插件加载失败
+            self.logger.warning("[todo] 注册 AI 工具失败", exc_info=True)
         self.logger.info("[todo] 已加载（ORM 表 %s）", Todo._table)
 
     async def on_enable(self):
