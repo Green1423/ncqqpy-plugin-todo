@@ -1,6 +1,6 @@
 # 日期表达式与最近时间查询
 
-> **插件说明**：本文件是表达式引擎的参考副本。插件内置假期数据只覆盖官方假期区间，`hol` **不包含普通周末**；普通周末请用 `[6,7]w`。插件用户手册见 [`TIME_EXPRESSIONS.md`](TIME_EXPRESSIONS.md)。
+> **插件说明**：本文件是 `learn/nearest_date_expr.py` 的参考副本。插件内置假期数据只覆盖官方假期区间，`hol` **不包含普通周末**；普通周末请用 `[6,7]w`。插件用户手册见 [`TIME_EXPRESSIONS.md`](TIME_EXPRESSIONS.md)。
 
 
 完整规则、形式化语义、复杂度与性能优化见
@@ -9,7 +9,7 @@
 实现文件：
 
 - 本插件内置副本：[date_expr.py](../date_expr.py)
-- 插件验收测试：[tests/test_todo.py](../tests/test_todo.py)
+- 插件验收测试：[tests/test_todo.py](../../../tests/test_todo.py)
 - 上游引擎的独立测试不在插件包内
 
 只使用 Python 标准库，不依赖目录里的其他脚本。
@@ -20,7 +20,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from date_expr import nearest, next_time, matches
+from nearest_date_expr import nearest, next_time, matches
 
 now = datetime(2026, 11, 3, 20, 36, tzinfo=ZoneInfo("Asia/Shanghai"))
 
@@ -62,6 +62,8 @@ matches("hol", datetime(2026, 10, 1, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai")))
 | `1w` | 每个周一 09:00 |
 | `eY` | 每年 12 月 31 日 09:00，D 精度 |
 | `eM` | 每月最后一天 09:00，D 精度 |
+| `now` | 查询基准时间，分钟粒度 |
+| `+1D` | 从当前时间起，每 1 天一个周期点 |
 | `1w & {10h}` | 每个周一 10:00 |
 
 包的单位是“槽位粒度”。例如 `{10h}` 覆盖整个 10 点小时，但它的代表时间是
@@ -140,7 +142,7 @@ a & b | c   ==   a & (b | c)
 
 ```python
 from datetime import date
-from date_expr import HolidayCalendar, nearest
+from nearest_date_expr import HolidayCalendar, nearest
 
 cal = HolidayCalendar()          # 带内置数据
 cal.add_period(
@@ -171,8 +173,12 @@ parse(expression, *, calendar=None) -> Expr
 
 ## 测试
 
-插件验收：`./venv-arm/bin/python -B tests/test_todo.py`（命令 / 提醒与重复 /
-调度恢复 / 白名单；引擎规则由这些用例间接覆盖）。上游引擎的独立测试不在插件包内。
+```bash
+python3 -m unittest -v test_nearest_date_expr
+```
+
+当前 85 个测试覆盖：默认补全、星期、集合/区间/步长、类型转换、运算优先级、
+差集语义、四个节假日集合、时区、显式远年份和错误输入。
 
 
 ## 节假日数据来源

@@ -11,7 +11,7 @@ import logging
 import shutil
 import sys
 import tempfile
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -112,6 +112,12 @@ class Env:
             raise AssertionError("todo.jobs.reminder 还没有被插件加载器导入")
         return module
 
+    def summary(self):
+        module = sys.modules.get("napcat_plugin_todo.jobs.summary")
+        if module is None:
+            raise AssertionError("todo.jobs.summary 还没有被插件加载器导入")
+        return module
+
     async def start(self):
         self.plugin = await self.mgr.load("todo")
         check("插件加载成功", self.plugin is not None)
@@ -179,19 +185,29 @@ def test_expressions() -> None:
         raised = True
     check("非法表达式抛 DateExprError", raised)
 
-    check("+1D = 每隔 1 天", at("+1D") == "2026-11-04 22:56", at("+1D"))
-    check("+2h = 每隔 2 小时", at("+2h") == "2026-11-04 00:56", at("+2h"))
-    check("+1w = 每隔 1 周", at("+1w") == "2026-11-10 22:56", at("+1w"))
-    check("+1M = 每隔 1 个月", at("+1M") == "2026-12-03 22:56", at("+1M"))
-    check("+1D 是周期规则", schedule.is_periodic("+1D", pivot))
+    check("now = 基准时间", at("now") == "2026-11-03 22:56", at("now"))
+    check("now+1h = 基准时间 + 1 小时",
+          at("now+1h") == "2026-11-03 23:56", at("now+1h"))
+    check("+1D 周期包含起点", at("+1D") == "2026-11-03 22:56", at("+1D"))
+    first = schedule.first_occurrence("+1D", pivot)
+    check("插件首次排程跳过 +1D 起点",
+          first is not None and first.strftime("%Y-%m-%d %H:%M")
+          == "2026-11-04 22:56", str(first))
+    check("+1D 是周期规则", schedule.is_periodic(
+        "+1D", schedule.next_occurrence("+1D", pivot)))
+    check("端点 s/e：周末第一天/最后一天",
+          at("([6,7]w)s") == "2026-11-07 09:00"
+          and at("([6,7]w)e") == "2026-11-08 09:00")
+    check("偏移：{5D}+1D", at("{5D}+1D") == "2026-11-06 09:00",
+          at("{5D}+1D"))
+    check("偏移：{10h}+1h", at("{10h}+1h") == "2026-11-04 11:00",
+          at("{10h}+1h"))
     try:
-        schedule.validate_expression("+0D")
+        schedule.parse_expression("+0D")
         raised = False
     except schedule.DateExprError:
         raised = True
     check("+0D 被拒绝", raised)
-    schedule.validate_expression("+1D")
-    check("+1D 通过校验", True)
 
 
 # ==================== 2. ORM ====================
@@ -250,6 +266,11 @@ def test_orm() -> None:
                                 chat_id="10", title="迁移后新增", content="",
                                 remind="", repeat="")
     check("迁移后主键仍唯一且继续增长", fresh.pk > 1, str(fresh.pk))
+    empty = Todo.objects.create(chat="user:11", chat_type="private",
+                                chat_id="11", title="空截止", content="",
+                                remind="", repeat="", deadline="")
+    check("空 deadline 读回 None",
+          Todo.objects.get(pk=empty.pk).deadline is None)
     db.close()
 
 
@@ -370,6 +391,111 @@ async def test_pagination() -> None:
         check("完成项仍参与分页并显示状态", "共 5 条 · 第 1/2 页" in text
               and "#1 第1条 · 已完成" in text, text)
         check("分页链接仍可用", "--page=2" in text, text)
+    finally:
+        await env.close()
+
+
+async def test_learn_syntax() -> None:
+    print("\n[4.1] learn 新语法：+周期 / 端点 / 偏移")
+    env = Env(page_size=10)
+    try:
+        await env.start()
+        before = schedule.now()
+        text = await env.ask('/todo add 周期 --remind="+1D" --repeat="+1D"')
+        check("+1D 能通过命令添加", "已添加待办" in text, text)
+        todo = env.model().objects.filter(title="周期").first()
+        check("+1D 首次提醒严格在未来",
+              schedule.parse_iso(todo.next_remind) > before,
+              todo.next_remind)
+        check("+1D 首次重复严格在未来",
+              schedule.parse_iso(todo.next_repeat) > before,
+              todo.next_repeat)
+
+        todo.next_remind = schedule.to_iso(schedule.now() - timedelta(seconds=2))
+        todo.save()
+        env.api.sent.clear()
+        await env.jobs().tick(env.plugin)
+        check("+1D 到点能发提醒", any(f"#{todo.pk}" in item[2]
+                                    for item in env.api.sent if item[0] == "private"),
+              str(env.api.sent))
+        todo = env.model().objects.get(pk=todo.pk)
+        check("+1D 发送后推进下一次",
+              schedule.parse_iso(todo.next_remind) > before, todo.next_remind)
+
+        text = await env.ask('/todo add 端点 --repeat="([6,7]w)s"')
+        check("端点 s 能通过命令添加", "已添加待办" in text, text)
+        text = await env.ask('/todo add 偏移 --remind="{5D}+1D"')
+        check("偏移能通过命令添加", "已添加待办" in text, text)
+    finally:
+        await env.close()
+
+
+async def test_deadline_summary() -> None:
+    print("\n[4.2] deadline / 每日日报")
+    env = Env(page_size=10)
+    try:
+        await env.start()
+        text = await env.ask('/todo add 有截止 --deadline="2026-11-10 18:00"')
+        check("add 写入 deadline", "截止时间：2026-11-10 18:00" in text, text)
+        todo = env.model().objects.filter(title="有截止").first()
+        check("deadline 是 datetime",
+              isinstance(todo.deadline, datetime), repr(todo.deadline))
+        check("deadline 时间正确",
+              todo.deadline.hour == 18 and todo.deadline.minute == 0,
+              str(todo.deadline))
+
+        text = await env.ask("/todo set 1 --deadline=false")
+        check("set --deadline=false 清除截止", "截止时间：无" in text, text)
+        check("清除后 deadline 为 None",
+              env.model().objects.get(pk=1).deadline is None)
+
+        text = await env.ask('/todo set 1 --deadline="2026-11-12"')
+        check("只写日期按当天 23:59",
+              env.model().objects.get(pk=1).deadline.hour == 23
+              and env.model().objects.get(pk=1).deadline.minute == 59, text)
+
+        text = await env.ask(
+            '/todo add 互斥 --repeat="1w" --deadline="2026-11-10 18:00"')
+        check("deadline 和 repeat 互斥（add）", "互斥" in text, text)
+        text = await env.ask('/todo set 1 --repeat="1w"')
+        check("deadline 和 repeat 互斥（set）", "互斥" in text, text)
+        text = await env.ask('/todo set 1 --deadline=false --repeat="1w"')
+        check("同时清 deadline 并设 repeat 可以",
+              "重复规则：1w" in text and "截止时间：无" in text, text)
+        await env.ask("/todo set 1 --repeat=false")
+
+        text = await env.ask('/todo add 坏截止 --deadline="not-a-date"')
+        check("非法 deadline 被拒绝", "格式不对" in text, text)
+
+        moment = schedule.now()
+        overdue = env.model().objects.create(
+            chat="user:10001", chat_type="private", chat_id="10001",
+            title="逾期任务", content="", remind="", repeat="",
+            deadline=moment - timedelta(hours=1), done=False)
+        done = env.model().objects.create(
+            chat="user:10001", chat_type="private", chat_id="10001",
+            title="今天完成", content="", remind="", repeat="",
+            done=True, done_at=schedule.to_iso(moment))
+        old = env.model().objects.create(
+            chat="user:20002", chat_type="private", chat_id="20002",
+            title="昨天完成", content="", remind="", repeat="",
+            done=True,
+            done_at=schedule.to_iso(moment - timedelta(days=1)))
+
+        env.api.sent.clear()
+        sent = await env.summary().send(env.plugin)
+        check("日报只发有内容的会话", sent == 1, str(env.api.sent))
+        msg = env.api.sent[-1][2] if env.api.sent else ""
+        check("日报统计今日完成/未完成/逾期",
+              "今日完成 1 条" in msg and "未完成 2 条" in msg
+              and "已逾期 1 条" in msg, msg)
+        check("日报列出逾期编号与截止",
+              f"#{overdue.pk}" in msg and "已逾期" in msg, msg)
+        check("日报不发给只有昨日完成的会话",
+              all(item[1] != "20002" for item in env.api.sent),
+              str(env.api.sent))
+        check("日报能显示今日完成项", f"#{done.pk}" in msg, msg)
+        check("昨日完成不进入今日完成", f"#{old.pk}" not in msg, msg)
     finally:
         await env.close()
 
@@ -514,6 +640,8 @@ async def test_recovery(env: Env) -> None:
     check("enable 后补回 next_repeat", todo.next_repeat != "", todo.next_repeat)
     check("enable 后扫描任务重新注册", any(
         item["id"] == "todo.tick" for item in env.timer.list_all()))
+    check("enable 后日报任务注册", any(
+        item["id"] == "todo.summary" for item in env.timer.list_all()))
 
     before = env.model().objects.count()
     await env.mgr.disable("todo")
@@ -541,6 +669,8 @@ async def main() -> int:
         await env.close()
 
     await test_pagination()
+    await test_learn_syntax()
+    await test_deadline_summary()
 
     print(f"\n{'=' * 44}\n通过 {PASSED} / 失败 {FAILED}")
     return 1 if FAILED else 0

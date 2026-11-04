@@ -27,23 +27,23 @@
 
 ---
 
-## 1. 五个信息与参数顺序
+## 1. 六个信息与参数顺序
 
-一条待办只有：
+一条待办有：
 
 ```text
-id / title / content / remind / repeat
+id / title / content / remind / repeat / deadline
 ```
 
 命令里的位置顺序固定为：
 
 ```text
-/todo add  <title> [content] [remind] [repeat]
-/todo set  <id> [title] [content] [remind] [repeat]
+/todo add  <title> [content] [remind] [repeat] [deadline]
+/todo set  <id> [title] [content] [remind] [repeat] [deadline]
 ```
 
 - `<...>` 必填，`[...]` 可选，尖括号 / 方括号本身不用输入；
-- 含 **空格** 的表达式必须加引号，或改用 `--remind=` / `--repeat=`；
+- 含 **空格** 的表达式必须加引号，或改用 `--remind=` / `--repeat=` / `--deadline=`；
 - `--键=值` 可以放在任意位置；位置参数仍按上面的顺序填。
 
 推荐写法：
@@ -58,7 +58,7 @@ id / title / content / remind / repeat
 ## 2. `/todo add`：添加
 
 ```text
-/todo add <title> [content] [remind] [repeat]
+/todo add <title> [content] [remind] [repeat] [deadline]
 ```
 
 | 参数 | 说明 |
@@ -67,6 +67,7 @@ id / title / content / remind / repeat
 | `content` | 提醒文案，最多 500 字；省略 = 配置 `default_remind`；`-` = 恢复默认 |
 | `remind` | 提醒时间规则；`false` / 省略 = 不提醒 |
 | `repeat` | 重复时间规则；`false` / 省略 = 不重复；`true` = 同 `remind` |
+| `deadline` | 截止时间（`YYYY-MM-DD HH:MM`；只写日期按 23:59）；`false` / 省略 = 无截止；与 `repeat` 互斥 |
 
 ### 2.1 最小用法
 
@@ -85,15 +86,36 @@ id / title / content / remind / repeat
 - 在 2026-11-10 08:00 提醒一次；
 - 没有 `repeat`，完成即永久结束。
 
-相对写法也可以：
+### 2.3 周期写法 `+1D`
+
+`+1D` 来自 learn 引擎的周期集合，表示“每隔 1 天”：
 
 ```text
-/todo add 提醒我 --remind="+1D"
+/todo add 吃药 --remind="+1D" --repeat="+1D"
 ```
 
-表示“从现在起 1 天后提醒一次”；没有 `repeat`，提醒后完成即结束。
+- 引擎的周期序列包含当前分钟；
+- 插件的首次排程取严格未来的一次，所以第一次提醒在 1 天后，不会在添加时立刻发送；
+- 之后每天同一分钟提醒 / 重开；
+- `+1h`、`+1M`、`+1D2h` 同理。
 
-### 2.3 周期性提醒 + 周期性重开
+其他 learn 语法（`now`、端点 `s/e`、偏移 `+/-`）见
+[时间表达式用户手册](TIME_EXPRESSIONS.md#9-now周期端点偏移)。
+
+### 2.4 deadline：截止时间
+
+```text
+/todo add 交房租 --remind="2026Y11M10D8h" --deadline="2026-11-10 18:00"
+/todo add 体检 --deadline="2026-11-12"
+```
+
+- `deadline` 是**具体时间点**（`DateTimeField`），不是时间表达式；
+- 写法：`YYYY-MM-DD HH:MM`，也接受 ISO 8601；只写日期按当天 23:59；
+- 它不发送提醒，只在每日日报里用于判断“截止时间 / 已逾期”；
+- **与 `repeat` 互斥**：有截止时间的待办不能同时设重复规则；要切换请先清掉一个；
+- 修改：`/todo set <id> --deadline="2026-11-15 18:00"`；清除：`--deadline=false`。
+
+### 2.5 周期性提醒 + 周期性重开
 
 ```text
 /todo add 吃药 --remind="8h" --repeat="8h"
@@ -109,7 +131,7 @@ id / title / content / remind / repeat
 
 每周一 17:30 提醒，完成后每周一 18:00 重开（时间点不同，仅作示例）。
 
-### 2.4 只重复、不提醒
+### 2.6 只重复、不提醒
 
 ```text
 /todo add 买菜 --repeat="1w"
@@ -117,7 +139,7 @@ id / title / content / remind / repeat
 
 每周一 09:00 重新打开，不发消息；完成后到下一个周一再打开。
 
-### 2.5 位置参数与引号
+### 2.7 位置参数与引号
 
 ```text
 /todo add 吃药 "记得吃药" "8h" "8h"
@@ -169,14 +191,14 @@ id / title / content / remind / repeat
 💡 下一页 /todo list --page=2
 ```
 
-`list` 不显示提醒规则、下次提醒、重复规则；这些在 `add` / `set` 的回执里能看到。
+`list` 不显示提醒规则、下次提醒、重复规则、截止时间；这些在 `add` / `set` 的回执和每日日报里能看到。
 
 ---
 
 ## 4. `/todo set`：修改
 
 ```text
-/todo set <id> [title] [content] [remind] [repeat]
+/todo set <id> [title] [content] [remind] [repeat] [deadline]
 ```
 
 所有字段都是“省略 = 不改”。只改给出的字段，未给出的保持原值。
@@ -187,6 +209,7 @@ id / title / content / remind / repeat
 | `content` | 新提醒文案；省略 = 不改；`-` = 恢复默认 |
 | `remind` | 新提醒规则；省略 = 不改；`false` / `-` = 不提醒 |
 | `repeat` | 新重复规则；省略 = 不改；`false` / `-` = 不重复；`true` = 同 `remind` |
+| `deadline` | 新截止时间；省略 = 不改；`false` / `-` = 清除；与 `repeat` 互斥 |
 
 示例：
 
@@ -196,6 +219,8 @@ id / title / content / remind / repeat
 /todo set 1 --repeat=false
 /todo set 1 新标题
 /todo set 1 --content="新的提醒文案"
+/todo set 1 --deadline="2026-11-15 18:00"
+/todo set 1 --deadline=false
 ```
 
 注意：
@@ -203,7 +228,9 @@ id / title / content / remind / repeat
 - 已完成的待办不能 `set`；等它因 `repeat` 重开，或先 `/todo del` 再重新添加；
 - `repeat=true` 需要当前（或同一条命令里新设置的）`remind` 非空；
 - 改 `remind` 会重新计算下一次提醒；改 `repeat` 会重新计算下一次重开；
-- 只改标题 / 文案不会重置已有的下次时间。
+- 只改标题 / 文案不会重置已有的下次时间；
+- 截止时间只影响日报里的逾期判断，不改变提醒 / 重复时间；
+- 同一个待办不能同时有 `deadline` 和 `repeat`。
 
 ---
 
@@ -266,7 +293,25 @@ id / title / content / remind / repeat
 
 ---
 
-## 8. 常见问题
+## 8. 每日日报
+
+默认每天 `22:00` 按会话发送一条日报：
+
+- 今天完成数、当前未完成数、已逾期数；
+- 未完成项的编号、标题、截止时间（最多 10 条）；
+- 只有今天有完成记录或还有未完成待办的会话才发送。
+
+配置：
+
+```json
+"summary_enabled": true,
+"summary_time": "22:00"
+```
+
+改完 `summary_time` 后重载插件生效；时间按本机时区解释。截止时间用
+`deadline` 字段设置，参见 2.4。
+
+## 9. 常见问题
 
 ### Q1. 为什么 `/todo check` 后还显示“已完成”？
 
@@ -303,23 +348,34 @@ id / title / content / remind / repeat
 `repeat` 只控制“完成后是否重新打开”，不控制 `remind` 自己的周期。
 `remind="8h"` 是每天 8 点提醒；想只提醒一次，把 `remind` 改成具体时刻。
 
-### Q6. 分页每页太少 / 太多？
+### Q6. 怎么改日报时间？
+
+改 `config.json → plugins.todo.summary_time`（`HH:MM`），然后重载插件。
+`summary_enabled=false` 可以关闭。日报按本机时区，不是表达式时区。
+
+### Q7. 截止时间到了会自动提醒吗？
+
+不会。`deadline` 只用于日报里的“截止 / 已逾期”判断；提醒仍然由 `remind`
+控制。需要提前提醒请另写 `remind`。另外 `deadline` 与 `repeat` 互斥，
+不能同时设置。
+
+### Q8. 分页每页太少 / 太多？
 
 改 `config.json → plugins.todo.list_page_size`（1–50），然后重载插件。
 
-### Q7. 群里没有反应？
+### Q9. 群里没有反应？
 
 - 群不在 `binding.groups` 里；
 - 群里需要先 @机器人 再发命令；
 - `bind` 只能私聊超管操作。
 
-### Q8. 群小窗能用吗？
+### Q10. 群小窗能用吗？
 
 来源群在 `binding.groups` 里即可；待办按用户私聊归属，提醒按临时会话发回。
 
 ---
 
-## 9. 相关文档
+## 10. 相关文档
 
 - [时间表达式用户手册](TIME_EXPRESSIONS.md)
 - [表达式引擎规则](DATE_EXPR_RULES.md)

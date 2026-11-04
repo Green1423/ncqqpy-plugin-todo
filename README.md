@@ -32,6 +32,8 @@ git clone https://github.com/Green1423/ncqqpy-plugin-todo plugins/todo
   "max_todos_per_chat": 50,
   "list_page_size": 10,
   "done_keep_days": 30,
+  "summary_enabled": true,
+  "summary_time": "22:00",
   "binding": {
     "groups": [],
     "users": []

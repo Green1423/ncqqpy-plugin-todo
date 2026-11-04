@@ -1,9 +1,9 @@
 """待办的 ORM 模型（``napcat.store``）。
 
-一条待办对外只有 5 个信息：``id`` / ``title`` / ``content`` / ``remind`` /
-``repeat``。``remind`` 和 ``repeat`` 都是字符串：空 = false（不提醒 / 不重复），
-否则是时间规则表达式。``next_remind``、``next_repeat``、``done`` 等是调度与
-展示用的内部列，不通过命令设置。
+一条待办对外有 6 个信息：``id`` / ``title`` / ``content`` / ``remind`` /
+``repeat`` / ``deadline``。``remind`` / ``repeat`` 是时间规则表达式字符串；
+``deadline`` 是具体时间点（``DateTimeField``），与 ``repeat`` 互斥。
+``next_remind``、``next_repeat``、``done`` 等是调度与展示用的内部列。
 
 表由框架的 ``PluginBase.database(ensure=[Todo])`` 建在
 ``plugins/todo/data/todo.db``；增删改查全部走 ``Todo.objects``。
@@ -16,10 +16,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from napcat.store import (
-    BooleanField, CharField, IntegerField, Model, TextField,
+    BooleanField, CharField, DateTimeField, IntegerField, Model, TextField,
 )
 
-from .schedule import DateExprError, parse_iso, validate_expression
+from .schedule import DateExprError, parse_iso, parse_expression
 
 __all__ = ["ChatRef", "Todo", "import_legacy_json"]
 
@@ -37,10 +37,11 @@ class ChatRef:
 class Todo(Model):
     """一条待办。
 
-    对外只有 5 个字段；其余列是调度与状态元数据。
+    对外有 6 个字段；其余列是调度与状态元数据。
 
     * ``remind`` 为空 = 不提醒；否则是提醒时间规则表达式。
     * ``repeat`` 为空 = 不重复；否则是重复时间规则表达式。
+    * ``deadline`` 为空 = 无截止；否则是一个具体时间点，且与 ``repeat`` 互斥。
     """
 
     class Meta:
@@ -56,6 +57,7 @@ class Todo(Model):
     content = TextField(default="")
     remind = CharField(max_length=160, default="")
     repeat = CharField(max_length=160, default="")
+    deadline = DateTimeField(default="")
 
     created_at = CharField(max_length=40, default="")
     next_remind = CharField(max_length=40, default="")
@@ -68,6 +70,13 @@ class Todo(Model):
     done_at = CharField(max_length=40, default="")
     checked_at = CharField(max_length=40, default="")
     reminder_count = IntegerField(default=0)
+
+    def save(self, *, using=None):
+        # 旧库的 deadline 列是 NOT NULL DEFAULT ''；空值统一写空串，
+        # 读取时 DateTimeField 会还原成 None。
+        if self.deadline is None:
+            self.deadline = ""
+        return super().save(using=using)
 
     @property
     def remind_at(self):
@@ -144,7 +153,7 @@ def _legacy_fields(data: dict) -> dict | None:
         if not rule:
             continue
         try:
-            validate_expression(rule)
+            parse_expression(rule)
         except DateExprError:
             return None
 

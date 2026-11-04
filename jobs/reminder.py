@@ -3,10 +3,13 @@
 扫描由插件在 ``on_enable()`` 里注册的 ``todo.tick`` 定时任务驱动（默认 20 秒）。
 不每条待办各挂一个定时器：待办数量会变、改规则要重排，集中扫描的边角情况更少。
 
-``remind`` 和 ``repeat`` 是两条独立的规则：
+``remind`` 和 ``repeat`` 是两条独立的调度规则：
 
 * ``remind`` 为空 = 不提醒；否则到 ``next_remind`` 时发消息并排下一次；
 * ``repeat`` 为空 = 不重复；否则 ``next_repeat`` 过期后按表达式往后排。
+
+``deadline`` 是具体时间点（``DateTimeField``），与 ``repeat`` 互斥，不参与
+扫描排程；它只供每日日报判断逾期。
 
 定时器是内存态：插件停用 / 进程重启后只剩数据库里的 ``next_remind`` /
 ``next_repeat``。所以每次 ``on_enable()`` 先调用 :func:`recover` 把断掉的
@@ -17,8 +20,8 @@ from __future__ import annotations
 from napcat.store import StoreError
 
 from ..schedule import (
-    DateExprError, advance_from, next_occurrence, now, parse_iso, to_iso,
-    validate_expression,
+    DateExprError, advance_from, first_occurrence, next_occurrence, now,
+    parse_iso, parse_expression, to_iso,
 )
 from ..store import Todo
 
@@ -38,7 +41,7 @@ def recover(plugin) -> int:
             if todo.repeat:
                 if not todo.next_repeat or parse_iso(todo.next_repeat) is None:
                     todo.next_repeat = to_iso(
-                        next_occurrence(todo.repeat, moment))
+                        first_occurrence(todo.repeat, moment))
                     changed = True
             elif todo.next_repeat:
                 todo.next_repeat = ""
@@ -52,7 +55,7 @@ def recover(plugin) -> int:
             elif todo.remind:
                 if not todo.next_remind or parse_iso(todo.next_remind) is None:
                     todo.next_remind = to_iso(
-                        next_occurrence(todo.remind, moment))
+                        first_occurrence(todo.remind, moment))
                     changed = True
             elif todo.next_remind:
                 todo.next_remind = ""
@@ -84,9 +87,9 @@ async def tick(plugin) -> None:
     for todo in Todo.objects.all().order_by("id"):
         try:
             if todo.remind:
-                validate_expression(todo.remind)
+                parse_expression(todo.remind)
             if todo.repeat:
-                validate_expression(todo.repeat)
+                parse_expression(todo.repeat)
         except DateExprError as exc:
             plugin.logger.warning(
                 "[todo] 待办 #%s 的规则无效，跳过：%s", todo.id, exc)
@@ -103,7 +106,7 @@ async def tick(plugin) -> None:
                 todo.reminded = False
                 todo.missed = False
                 todo.next_remind = to_iso(
-                    next_occurrence(todo.remind, moment)) if todo.remind else ""
+                    first_occurrence(todo.remind, moment)) if todo.remind else ""
             todo.save()
             changed = True
         elif not todo.repeat and todo.next_repeat:

@@ -1,17 +1,21 @@
 """``/todo`` 子命令的参数 Schema。
 
-一条待办对外只有 5 个信息：``id`` / ``title`` / ``content`` / ``remind`` /
-``repeat``。位置顺序与它一致：
+一条待办对外有 6 个信息：``id`` / ``title`` / ``content`` / ``remind`` /
+``repeat`` / ``deadline``。位置顺序与它一致：
 
-    /todo add <title> [content] [remind] [--repeat=false]
-    /todo set <id> [title] [content] [remind] [--repeat=…]
+    /todo add <title> [content] [remind] [repeat] [deadline]
+    /todo set <id> [title] [content] [remind] [repeat] [deadline]
 
-``remind`` / ``repeat`` 都是字符串：``false`` / 空 = 不提醒 / 不重复，
-否则就是时间规则表达式；``repeat=true`` 表示与 ``remind`` 用同一条表达式。
+``remind`` / ``repeat`` 是时间规则表达式；``deadline`` 是具体时间
+（``YYYY-MM-DD HH:MM``，``DatetimeField``），与 ``repeat`` 互斥；``repeat=true``
+表示与 ``remind`` 用同一条表达式。
 """
 from __future__ import annotations
 
-from napcat.command import ChoiceField, CommandSchema, IntField, StrField
+from napcat.command import (
+    ChoiceField, CommandSchema, DatetimeField, IntField, StrField,
+)
+from .schedule import TZ
 
 __all__ = [
     "AddSchema", "ListSchema", "SetSchema", "DelSchema", "CheckSchema",
@@ -28,6 +32,8 @@ class AddSchema(CommandSchema):
                       description="提醒时间规则表达式；false / 省略 = 不提醒")
     repeat = StrField(default="", max_length=160,
                       description="重复时间规则表达式；false / 省略 = 不重复；true = 同 remind")
+    deadline = DatetimeField(default=None, tz=TZ,
+                             description="截止时间（YYYY-MM-DD HH:MM；false / 省略 = 无截止）")
 
 
 class ListSchema(CommandSchema):
@@ -44,6 +50,8 @@ class SetSchema(CommandSchema):
                       description="新的提醒规则（省略 = 不改；false / - = 不提醒）")
     repeat = StrField(default="", max_length=160,
                       description="新的重复规则（省略 = 不改；false / - = 不重复；true = 同 remind）")
+    deadline = DatetimeField(default=None, tz=TZ,
+                             description="新的截止时间（YYYY-MM-DD HH:MM；省略 = 不改；false / - = 清除）")
 
 
 class DelSchema(CommandSchema):

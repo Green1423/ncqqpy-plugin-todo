@@ -2,10 +2,11 @@
 
 核心设计
 --------
-* **5 个信息**：``id`` / ``title`` / ``content`` / ``remind`` / ``repeat``。
-  ``remind`` 是提醒时间规则表达式（``false`` / 空 = 不提醒），
+* **6 个信息**：``id`` / ``title`` / ``content`` / ``remind`` / ``repeat`` /
+  ``deadline``。``remind`` 是提醒时间规则表达式（``false`` / 空 = 不提醒），
   ``repeat`` 是重复时间规则表达式（``false`` / 空 = 不重复，``true`` = 同
-  ``remind``）；两者都是字符串，空即 false。
+  ``remind``），``deadline`` 是具体时间点（``DateTimeField``，与 ``repeat``
+  互斥，空 = 无截止）。
 * **表达式内核**：直接使用 ``date_expr`` 的表达式语言（内置引擎的设计），
   因此“周期待办”不需要额外的
   cron 语法：``8h`` 是每天 08:00，``1w & {18h}`` 是每周一 18:00，
@@ -35,6 +36,7 @@ except ImportError:  # 旧框架的兼容名
 from . import render
 from .commands import todo as todo_cmd
 from .jobs import reminder as reminder_job
+from .jobs import summary as summary_job
 from .schedule import now, parse_iso
 from .schemas import (
     AddSchema, BindSchema, CheckSchema, DelSchema, ListSchema, SetSchema,
@@ -46,8 +48,8 @@ class TodoPlugin(PluginBase):
     """待办 + 周期提醒。"""
 
     name = "todo"
-    version = "2.0.0"
-    description = "待办与周期提醒（时间规则表达式 / 服务范围白名单）"
+    version = "2.1.0"
+    description = "待办、周期提醒、截止时间与每日日报（时间规则表达式）"
     author = "ncqqpy"
 
     # ------------------------------------------------------------------ 配置
@@ -62,6 +64,8 @@ class TodoPlugin(PluginBase):
             "max_todos_per_chat": 50,
             "list_page_size": 10,
             "done_keep_days": 30,
+            "summary_enabled": True,
+            "summary_time": "22:00",
             # 服务范围（口径见 napcat.subscribe）：空 = 谁都不用，不回落
             # 框架的 bound_groups（那是“监听哪些群”，语义正好相反）。
             # 超级用户始终可用；给其他人/群开通用 /todo bind。
@@ -91,6 +95,7 @@ class TodoPlugin(PluginBase):
         self._register_commands()
         self._install_visibility_filter()
         self._start_tick()
+        self._start_summary()
 
         # 每次 enable 都把断掉的“下一次”补回来：定时器本身是内存态，
         # 进程/插件停用后只剩数据库里的 next_remind / next_repeat。
@@ -116,6 +121,7 @@ class TodoPlugin(PluginBase):
         self._remove_visibility_filter()
         self._unregister_commands()
         self._stop_tick()
+        self._stop_summary()
         await super().on_disable()
 
     async def on_unload(self):
@@ -138,22 +144,22 @@ class TodoPlugin(PluginBase):
             return None
 
         @reg("todo.add", schema=AddSchema, permission="", scope="all",
-             description="添加待办：标题 + 可选文案 / 提醒规则 / 重复规则")
+             description="添加待办：标题 + 可选文案 / 提醒 / 重复 / 截止时间")
         async def cmd_add(params, event):
             return await todo_cmd.add(self, params, event)
 
         @reg("todo.list", schema=ListSchema, permission="", scope="all",
-             description="分页查看待办列表；-a / --all=true 连已完成的一起看")
+             description="分页查看待办（编号 / 标题 / 是否完成，含已完成）")
         async def cmd_list(params, event):
             return await todo_cmd.list_todos(self, params, event)
 
         @reg("todo.set", schema=SetSchema, permission="", scope="all",
-             description="修改待办的标题 / 文案 / 提醒规则 / 重复规则")
+             description="修改待办的标题 / 文案 / 提醒 / 重复 / 截止时间")
         async def cmd_set(params, event):
             return await todo_cmd.update(self, params, event)
 
         @reg("todo.check", schema=CheckSchema, permission="", scope="all",
-             description="打卡：完成单次待办，或跳过周期待办的这一次")
+             description="完成此项；有 repeat 规则时到点重新打开")
         async def cmd_check(params, event):
             return await todo_cmd.check(self, params, event)
 
@@ -193,6 +199,29 @@ class TodoPlugin(PluginBase):
             pass
         self._timers = [name for name in getattr(self, "_timers", [])
                         if name != "todo.tick"]
+
+    def _start_summary(self) -> None:
+        if not self.summary_enabled():
+            return
+        at = self.summary_time()
+        try:
+            self.timer.cancel("todo.summary")
+        except Exception:  # noqa: BLE001
+            pass
+        self._timers = [name for name in getattr(self, "_timers", [])
+                        if name != "todo.summary"]
+
+        @self.schedule_at(at, name="todo.summary", description="每天发送待办日报")
+        async def _summary():
+            await summary_job.send(self)
+
+    def _stop_summary(self) -> None:
+        try:
+            self.timer.cancel("todo.summary")
+        except Exception:  # noqa: BLE001
+            pass
+        self._timers = [name for name in getattr(self, "_timers", [])
+                        if name != "todo.summary"]
 
     # ------------------------------------------------------------------ 服务范围
 
@@ -377,3 +406,21 @@ class TodoPlugin(PluginBase):
 
     def done_keep_days(self) -> int:
         return self._int_cfg("done_keep_days", 30, minimum=1)
+
+    def summary_enabled(self) -> bool:
+        config = self.config
+        value = config.get("summary_enabled", True) if config is not None else True
+        if isinstance(value, str):
+            return value.strip().lower() not in ("false", "0", "off", "no", "")
+        return bool(value)
+
+    def summary_time(self) -> str:
+        config = self.config
+        raw = str(config.get("summary_time", "22:00") if config is not None else "22:00").strip()
+        try:
+            time.strptime(raw, "%H:%M")
+            return raw
+        except ValueError:
+            self.logger.warning(
+                "[todo] summary_time=%r 不是 HH:MM，回退到 22:00", raw)
+            return "22:00"

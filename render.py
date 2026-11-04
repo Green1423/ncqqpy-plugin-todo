@@ -1,13 +1,25 @@
 """待办与提醒的文本渲染（命令回执 / 定时提醒共用）。"""
 from __future__ import annotations
 
-from .schedule import fmt_datetime
+from datetime import datetime
+
+from .schedule import TZ, fmt_datetime, parse_iso
 from .store import Todo
 
 __all__ = [
     "clip", "todo_line", "list_text", "detail_text", "reminder_text",
-    "binding_text",
+    "summary_text", "binding_text",
 ]
+
+
+def _deadline(todo: Todo) -> datetime | None:
+    """deadline 正常是 datetime；历史脏数据/空串统一当无截止。"""
+    value = todo.deadline
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=TZ)
+    return value.astimezone(TZ)
 
 
 def clip(text: str, limit: int = 36) -> str:
@@ -46,7 +58,7 @@ def list_text(todos: list[Todo], *, page: int = 1, pages: int = 1,
 
 
 def detail_text(todo: Todo, *, verb: str = "已添加") -> str:
-    """单条回执（5 个信息 + 派生出的下一次时间）。"""
+    """单条回执（6 个信息 + 派生出的下一次时间）。"""
     lines = [
         f"✅ {verb}待办 #{todo.id}",
         f"标题：{todo.title or '待办'}",
@@ -55,6 +67,8 @@ def detail_text(todo: Todo, *, verb: str = "已添加") -> str:
         lines.append(f"提醒文案：{todo.content}")
     lines.append(f"提醒规则：{todo.remind or '不提醒'}")
     lines.append(f"重复规则：{todo.repeat or '不重复'}")
+    deadline = _deadline(todo)
+    lines.append("截止时间：" + (fmt_datetime(deadline) if deadline else "无"))
     if todo.next_remind:
         lines.append(f"下次提醒：{fmt_datetime(todo.remind_at)}")
     if todo.next_repeat:
@@ -68,6 +82,7 @@ def reminder_text(todo: Todo, when, template: str) -> str:
     只替换已知占位符，不调用 ``str.format``：用户文案里出现 ``{`` / ``}``
     （代码、正则、模板）时不应该报错，也不应该被当成未知字段。
     """
+    deadline = _deadline(todo)
     values = {
         "id": str(todo.id),
         "title": todo.title or "待办",
@@ -76,6 +91,7 @@ def reminder_text(todo: Todo, when, template: str) -> str:
         "expr": todo.remind,
         "remind": todo.remind,
         "repeat": todo.repeat,
+        "deadline": fmt_datetime(deadline) if deadline else "无截止",
     }
     template = (template or "⏰ 待办提醒 #{id}：{title}").strip()
     text = template
@@ -86,6 +102,55 @@ def reminder_text(todo: Todo, when, template: str) -> str:
         # 提醒必须能让用户对上号：模板没写 {id} 时补一行编号。
         text = f"待办 #{todo.id}\n{text}"
     return text
+
+
+def summary_text(todos: list[Todo], moment) -> str:
+    """当天完成情况日报；没有可报告的内容时返回空串。"""
+    active = [todo for todo in todos if not todo.done]
+    completed_today: list[Todo] = []
+    for todo in todos:
+        if not todo.done:
+            continue
+        finished = parse_iso(todo.done_at or todo.checked_at)
+        if finished is not None and finished.date() == moment.date():
+            completed_today.append(todo)
+
+    if not active and not completed_today:
+        return ""
+
+    overdue = [todo for todo in active
+               if _deadline(todo) is not None and _deadline(todo) <= moment]
+
+    lines = [f"🌙 待办日报 {moment:%m-%d}"]
+    done_line = f"✅ 今日完成 {len(completed_today)} 条"
+    if completed_today:
+        shown = "、".join(
+            f"#{todo.id} {clip(todo.title, 16)}"
+            for todo in completed_today[:5])
+        done_line += f"：{shown}"
+        if len(completed_today) > 5:
+            done_line += f" 等 {len(completed_today)} 条"
+    lines.append(done_line)
+    lines.append(f"⏳ 未完成 {len(active)} 条")
+    if overdue:
+        lines.append(f"⚠️ 已逾期 {len(overdue)} 条")
+
+    if active:
+        lines.append("📌 未完成：")
+        for todo in active[:10]:
+            suffix = ""
+            deadline = _deadline(todo)
+            if deadline is not None:
+                suffix = f"（截止 {deadline:%m-%d %H:%M}"
+                if deadline <= moment:
+                    suffix += "，已逾期"
+                suffix += "）"
+            lines.append(f"  #{todo.id} {clip(todo.title, 20)}{suffix}")
+        if len(active) > 10:
+            lines.append(f"  …另有 {len(active) - 10} 条")
+    else:
+        lines.append("🎉 当前没有未完成待办")
+    return "\n".join(lines)
 
 
 def binding_text(groups: set[int], users: set[int]) -> str:

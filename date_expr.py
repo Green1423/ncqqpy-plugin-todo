@@ -351,6 +351,11 @@ _NUMBER = "NUMBER"
 _UNIT = "UNIT"
 _NAME = "NAME"
 _LAST = "LAST"
+_END = "END"
+_START = "START"
+_PLUS = "PLUS"
+_MINUS = "MINUS"
+_NOW = "NOW"
 _LBRACE = "LBRACE"
 _RBRACE = "RBRACE"
 _LBRACKET = "LBRACKET"
@@ -374,6 +379,8 @@ _SINGLE = {
     "&": _AND,
     "|": _OR,
     "!": _DIFF,
+    "+": _PLUS,
+    "-": _MINUS,
 }
 
 
@@ -413,6 +420,15 @@ def _tokenize(source: str) -> list[_Token]:
                 continue
             if word in ("eY", "eM"):
                 tokens.append(_Token(_LAST, word, start))
+                continue
+            if word == "e":
+                tokens.append(_Token(_END, word, start))
+                continue
+            if word == "s":
+                tokens.append(_Token(_START, word, start))
+                continue
+            if word == "now":
+                tokens.append(_Token(_NOW, word, start))
                 continue
             if word in ("eD", "eh", "em"):
                 raise ParseError(
@@ -1046,6 +1062,452 @@ class _LastNode(Expr):
 
     def escape_candidates(self, day: date) -> set[tuple[int, int]]:
         return set()
+
+
+def _add_months(dt: datetime, months: int) -> datetime:
+    total = dt.year * 12 + (dt.month - 1) + months
+    year, month0 = divmod(total, 12)
+    month = month0 + 1
+    day = min(dt.day, monthrange(year, month)[1])
+    return dt.replace(year=year, month=month, day=day)
+
+
+@dataclass(frozen=True, slots=True)
+class _Now(Expr):
+    """The current reference time, minute-granular.
+
+    ``nearest``/``matches`` resolve this node against their explicit reference
+    time before evaluation.  The methods below are a fallback for direct AST
+    use and use the wall clock.
+    """
+
+    @property
+    def unit(self) -> str:
+        return "m"
+
+    def _current(self) -> datetime:
+        return datetime.now(DEFAULT_TZ).replace(second=0, microsecond=0)
+
+    def covers(self, dt: datetime) -> bool:
+        now = self._current()
+        return (
+            dt.year, dt.month, dt.day, dt.hour, dt.minute
+        ) == (
+            now.year, now.month, now.day, now.hour, now.minute
+        )
+
+    def seed_candidates(self, day: date) -> set[tuple[int, int]]:
+        now = self._current()
+        if day != now.date():
+            return set()
+        return {(now.hour, now.minute)}
+
+    def candidate_day_mask(self, year: int) -> int:
+        now = self._current()
+        if year != now.year:
+            return 0
+        cal = _year_calendar(year)
+        return 1 << (now.date().toordinal() - cal.start_ordinal)
+
+    def coverage_day_mask(self, year: int) -> int:
+        return self.candidate_day_mask(year)
+
+    def coverage_seed_candidates(self, day: date) -> set[tuple[int, int]]:
+        return self.seed_candidates(day)
+
+    def escape_candidates(self, day: date) -> set[tuple[int, int]]:
+        times = self.seed_candidates(day)
+        out: set[tuple[int, int]] = set()
+        for hour, minute in times:
+            if minute < 59:
+                out.add((hour, minute + 1))
+            elif hour < 23:
+                out.add((hour + 1, 0))
+        return out
+
+    def candidate_dates_in_year(self, year: int) -> set[date]:
+        return _mask_to_dates(self.candidate_day_mask(year), year)
+
+    def coverage_dates_in_year(self, year: int) -> set[date]:
+        return _mask_to_dates(self.coverage_day_mask(year), year)
+
+    def is_empty(self) -> bool:
+        return False
+
+    def year_is_wildcard(self) -> bool:
+        return True
+
+
+@dataclass(frozen=True, slots=True)
+class _Boundary(Expr):
+    """First/last matching point of each contiguous run of matched dates."""
+
+    child: Expr
+    mode: str                 # "first" or "last"
+
+    @property
+    def unit(self) -> str:
+        return "m"
+
+    @lru_cache(maxsize=512)
+    def _valid_times(self, day: date) -> tuple[tuple[int, int], ...]:
+        candidates = (
+            self.child.seed_candidates(day)
+            | self.child.coverage_seed_candidates(day)
+        )
+        valid: list[tuple[int, int]] = []
+        for hour, minute in candidates:
+            probe = datetime(
+                day.year, day.month, day.day, hour, minute,
+                tzinfo=DEFAULT_TZ,
+            )
+            if self.child.covers(probe):
+                valid.append((hour, minute))
+        return tuple(sorted(set(valid)))
+
+    @lru_cache(maxsize=256)
+    def _match_mask(self, year: int) -> int:
+        if year < 1 or year > 9999:
+            return 0
+        cal = _year_calendar(year)
+        coverage = self.child.coverage_day_mask(year)
+        out = 0
+        for day in _mask_to_dates(coverage, year):
+            if self._valid_times(day):
+                out |= 1 << (day.toordinal() - cal.start_ordinal)
+        return out
+
+    @lru_cache(maxsize=256)
+    def _day_mask(self, year: int) -> int:
+        if year < 1 or year > 9999:
+            return 0
+        mask = self._match_mask(year)
+        cal = _year_calendar(year)
+        if self.mode == "last":
+            out = mask & ~(mask >> 1)
+            if year < 9999 and self._match_mask(year + 1) & 1:
+                out &= ~(1 << (cal.day_count - 1))
+            return out
+        out = mask & ~(mask << 1)
+        if year > 1:
+            prev = _year_calendar(year - 1)
+            if self._match_mask(year - 1) & (1 << (prev.day_count - 1)):
+                out &= ~1
+        return out
+
+    @lru_cache(maxsize=512)
+    def _selected_time(self, day: date) -> tuple[int, int] | None:
+        cal = _year_calendar(day.year)
+        bit = day.toordinal() - cal.start_ordinal
+        if not (self._day_mask(day.year) & (1 << bit)):
+            return None
+        valid = self._valid_times(day)
+        if not valid:
+            return None
+        if self.mode == "first":
+            return valid[0]
+        return valid[-1]
+
+    def covers(self, dt: datetime) -> bool:
+        selected = self._selected_time(dt.date())
+        return selected == (dt.hour, dt.minute)
+
+    def seed_candidates(self, day: date) -> set[tuple[int, int]]:
+        selected = self._selected_time(day)
+        return {selected} if selected is not None else set()
+
+    def candidate_day_mask(self, year: int) -> int:
+        return self._day_mask(year)
+
+    def coverage_day_mask(self, year: int) -> int:
+        return self._day_mask(year)
+
+    def coverage_seed_candidates(self, day: date) -> set[tuple[int, int]]:
+        return self.seed_candidates(day)
+
+    def escape_candidates(self, day: date) -> set[tuple[int, int]]:
+        selected = self._selected_time(day)
+        if selected is None:
+            return set()
+        hour, minute = selected
+        if minute < 59:
+            return {(hour, minute + 1)}
+        if hour < 23:
+            return {(hour + 1, 0)}
+        return set()
+
+    def candidate_dates_in_year(self, year: int) -> set[date]:
+        return _mask_to_dates(self._day_mask(year), year)
+
+    def coverage_dates_in_year(self, year: int) -> set[date]:
+        return _mask_to_dates(self._day_mask(year), year)
+
+    def is_empty(self) -> bool:
+        return self.child.is_empty()
+
+    def explicit_years(self) -> set[int]:
+        return self.child.explicit_years()
+
+    def year_is_wildcard(self) -> bool:
+        return self.child.year_is_wildcard()
+
+
+@dataclass(frozen=True, slots=True)
+class _Shift(Expr):
+    """Shift every matching time by ``months`` and ``minutes``."""
+
+    child: Expr
+    months: int
+    minutes: int
+
+    @property
+    def unit(self) -> str:
+        return "m"
+
+    def _apply(self, dt: datetime) -> datetime:
+        if self.months:
+            dt = _add_months(dt, self.months)
+        if self.minutes:
+            dt = dt + timedelta(minutes=self.minutes)
+        return dt
+
+    def _inverse(self, target: datetime) -> list[datetime]:
+        base = target - timedelta(minutes=self.minutes)
+        if self.months == 0:
+            return [base]
+        total = base.year * 12 + (base.month - 1) - self.months
+        year, month0 = divmod(total, 12)
+        month = month0 + 1
+        out: list[datetime] = []
+        for day in range(1, monthrange(year, month)[1] + 1):
+            source = base.replace(year=year, month=month, day=day)
+            if self._apply(source) == target:
+                out.append(source)
+        return out
+
+    def covers(self, dt: datetime) -> bool:
+        return any(self.child.covers(src) for src in self._inverse(dt))
+
+    def _source_days(self, day: date) -> list[date]:
+        if self.months == 0:
+            base = day - timedelta(days=self.minutes // 1440)
+            start = base - timedelta(days=2)
+            return [start + timedelta(days=i) for i in range(5)]
+        anchor = day - timedelta(days=self.minutes // (24 * 60))
+        base = date(anchor.year, anchor.month, 1)
+        total = base.year * 12 + (base.month - 1) - self.months
+        year, month0 = divmod(total, 12)
+        month = month0 + 1
+        center = date(year, month, 1)
+        start = (center - timedelta(days=1)).replace(day=1)
+        end_month = (center + timedelta(days=32)).replace(day=1)
+        end = (end_month + timedelta(days=32)).replace(day=1)
+        out = []
+        d = start
+        while d < end:
+            out.append(d)
+            d += timedelta(days=1)
+        return out
+
+    def seed_candidates(self, day: date) -> set[tuple[int, int]]:
+        out: set[tuple[int, int]] = set()
+        for source_day in self._source_days(day):
+            times = (
+                self.child.seed_candidates(source_day)
+                | self.child.coverage_seed_candidates(source_day)
+            )
+            for hour, minute in times:
+                source = datetime(
+                    source_day.year, source_day.month, source_day.day,
+                    hour, minute, tzinfo=DEFAULT_TZ,
+                )
+                shifted = self._apply(source)
+                if shifted.date() == day:
+                    out.add((shifted.hour, shifted.minute))
+        return out
+
+    def candidate_day_mask(self, year: int) -> int:
+        # Safe over-approximation; seed_candidates/covers do exact filtering.
+        return _year_calendar(year).all_mask
+
+    def coverage_day_mask(self, year: int) -> int:
+        if year < 1 or year > 9999:
+            return 0
+        target = _year_calendar(year)
+        out = 0
+        whole_days = self.minutes % (24 * 60) == 0
+        year_shift = self.months // 12 + self.minutes // (365 * 24 * 60)
+        center_year = year - year_shift
+        for source_year in range(
+            max(1, center_year - 2), min(9999, center_year + 2) + 1
+        ):
+            source_dates = _mask_to_dates(
+                self.child.coverage_day_mask(source_year), source_year
+            )
+            for source_day in source_dates:
+                if whole_days:
+                    source = datetime(
+                        source_day.year, source_day.month, source_day.day,
+                        0, 0,
+                    )
+                    shifted = self._apply(source)
+                    if shifted.year == year:
+                        out |= 1 << (
+                            shifted.toordinal() - target.start_ordinal
+                        )
+                    continue
+                times = (
+                    self.child.seed_candidates(source_day)
+                    | self.child.coverage_seed_candidates(source_day)
+                )
+                for hour, minute in times:
+                    source = datetime(
+                        source_day.year, source_day.month, source_day.day,
+                        hour, minute,
+                    )
+                    shifted = self._apply(source)
+                    if shifted.year == year:
+                        out |= 1 << (
+                            shifted.toordinal() - target.start_ordinal
+                        )
+        return out
+
+    def candidate_dates_in_year(self, year: int) -> set[date]:
+        return _mask_to_dates(self.candidate_day_mask(year), year)
+
+    def coverage_dates_in_year(self, year: int) -> set[date]:
+        return _mask_to_dates(self.coverage_day_mask(year), year)
+
+    def coverage_seed_candidates(self, day: date) -> set[tuple[int, int]]:
+        return self.seed_candidates(day)
+
+    def escape_candidates(self, day: date) -> set[tuple[int, int]]:
+        out: set[tuple[int, int]] = set()
+        for hour, minute in self.seed_candidates(day):
+            if minute < 59:
+                out.add((hour, minute + 1))
+            elif hour < 23:
+                out.add((hour + 1, 0))
+        return out
+
+    def is_empty(self) -> bool:
+        return self.child.is_empty()
+
+    def explicit_years(self) -> set[int]:
+        years = self.child.explicit_years()
+        if not years:
+            return set()
+        out: set[int] = set()
+        for y in years:
+            for month, day in ((1, 1), (12, 31)):
+                source = datetime(y, month, day)
+                out.add(self._apply(source).year)
+        return out
+
+    def year_is_wildcard(self) -> bool:
+        return self.child.year_is_wildcard()
+
+
+@dataclass(frozen=True, slots=True)
+class _Periodic(Expr):
+    """Forward arithmetic sequence anchored at the query's current time."""
+
+    months: int
+    minutes: int
+    anchor: datetime | None = None
+
+    @property
+    def unit(self) -> str:
+        return "m"
+
+    def _start(self) -> datetime:
+        if self.anchor is not None:
+            return self.anchor
+        return datetime.now(DEFAULT_TZ).replace(second=0, microsecond=0)
+
+    def covers(self, dt: datetime) -> bool:
+        return (dt.hour, dt.minute) in self.seed_candidates(dt.date())
+
+    def seed_candidates(self, day: date) -> set[tuple[int, int]]:
+        start = self._start()
+        if day < start.date():
+            return set()
+        out: set[tuple[int, int]] = set()
+        if self.months == 0:
+            step = self.minutes
+            if step <= 0:
+                return set()
+            anchor_abs = start.hour * 60 + start.minute
+            target_start = (day - start.date()).days * 1440
+            lo = max(0, -(-(target_start - anchor_abs) // step))
+            hi = (target_start + 1439 - anchor_abs) // step
+            for k in range(lo, hi + 1):
+                total = anchor_abs + k * step
+                out.add(((total % 1440) // 60, total % 60))
+            return out
+
+        def point(k: int) -> datetime:
+            shifted = _add_months(start, k * self.months)
+            return shifted + timedelta(minutes=k * self.minutes)
+
+        # The sequence is monotonic.  Find the first period point whose date
+        # is at least `day`, then inspect a small neighbourhood.  This also
+        # handles compound periods where the minute component moves across
+        # several months per step.
+        hi = 1
+        while point(hi).date() < day and hi < 1_000_000:
+            hi *= 2
+        lo, high = 0, hi
+        while lo < high:
+            mid = (lo + high) // 2
+            if point(mid).date() < day:
+                lo = mid + 1
+            else:
+                high = mid
+        for k in range(max(0, lo - 2), lo + 3):
+            p = point(k)
+            if p.date() == day:
+                out.add((p.hour, p.minute))
+        return out
+
+    def candidate_day_mask(self, year: int) -> int:
+        if year < 1 or year > 9999:
+            return 0
+        start = self._start()
+        if year < start.year:
+            return 0
+        cal = _year_calendar(year)
+        if year > start.year:
+            return cal.all_mask
+        first_bit = start.date().toordinal() - cal.start_ordinal
+        return cal.all_mask & ~((1 << first_bit) - 1)
+
+    def coverage_day_mask(self, year: int) -> int:
+        return self.candidate_day_mask(year)
+
+    def coverage_seed_candidates(self, day: date) -> set[tuple[int, int]]:
+        return self.seed_candidates(day)
+
+    def escape_candidates(self, day: date) -> set[tuple[int, int]]:
+        out: set[tuple[int, int]] = set()
+        for hour, minute in self.seed_candidates(day):
+            if minute < 59:
+                out.add((hour, minute + 1))
+            elif hour < 23:
+                out.add((hour + 1, 0))
+        return out
+
+    def candidate_dates_in_year(self, year: int) -> set[date]:
+        return _mask_to_dates(self.candidate_day_mask(year), year)
+
+    def coverage_dates_in_year(self, year: int) -> set[date]:
+        return _mask_to_dates(self.coverage_day_mask(year), year)
+
+    def is_empty(self) -> bool:
+        return False
+
+    def year_is_wildcard(self) -> bool:
+        return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -1684,6 +2146,19 @@ class _Parser:
 
     def _parse_primary(self) -> Expr:
         tok = self._peek()
+        if tok.kind == _PLUS:
+            self.i += 1
+            if self._match(_LPAREN):
+                months, minutes = self._parse_offset_terms()
+                self._expect(_RPAREN, "')'")
+            else:
+                months, minutes = self._parse_offset_terms()
+            if months == 0 and minutes == 0:
+                raise ParseError("a periodic expression needs a non-zero period")
+            return self._parse_postfixed(
+                _Periodic(months, minutes), allow_endpoint=False
+            )
+
         if tok.kind == _LPAREN:
             self.i += 1
             expr = self._parse_and()
@@ -1692,34 +2167,46 @@ class _Parser:
             if unit is not None:
                 if isinstance(expr, _LastNode):
                     if unit == "D":
-                        return expr
-                    if unit in ("h", "m"):
-                        return _Cast(expr, unit)
-                    raise ParseError(
-                        "an eY/eM cast supports only D, h or m"
-                    )
-                if isinstance(expr, Atom):
+                        expr = expr
+                    elif unit in ("h", "m"):
+                        expr = _Cast(expr, unit)
+                    else:
+                        raise ParseError(
+                            "an eY/eM cast supports only D, h or m"
+                        )
+                elif isinstance(expr, Atom):
                     if unit in ("D", "h", "m") and _rank(unit) > _rank(expr.unit):
-                        # A fine-grained projection, e.g. (hol)h.  This
-                        # expands a day slot into its constituent hours.
-                        return _Cast(expr, unit)
-                    return expr.with_unit(unit)
-                if unit not in ("D", "h", "m"):
+                        # A fine-grained projection, e.g. (hol)h.
+                        expr = _Cast(expr, unit)
+                    else:
+                        expr = expr.with_unit(unit)
+                elif unit not in ("D", "h", "m"):
                     raise ParseError(
                         "a cast on a composite expression supports only D, h or m"
                     )
-                return _Cast(expr, unit)
-            return expr
+                else:
+                    expr = _Cast(expr, unit)
+            return self._parse_postfixed(expr, allow_endpoint=True)
 
         if tok.kind in (_LBRACE, _LBRACKET):
-            return self._parse_package()
+            return self._parse_postfixed(
+                self._parse_package(), allow_endpoint=False
+            )
 
         if tok.kind == _NUMBER:
-            return self._parse_bare_unit_expr()
+            return self._parse_postfixed(
+                self._parse_bare_unit_expr(), allow_endpoint=False
+            )
 
         if tok.kind == _LAST:
             self.i += 1
-            return self._parse_last_node(tok)
+            return self._parse_postfixed(
+                self._parse_last_node(tok), allow_endpoint=False
+            )
+
+        if tok.kind == _NOW:
+            self.i += 1
+            return self._parse_postfixed(_Now(), allow_endpoint=False)
 
         if tok.kind == _NAME:
             self.i += 1
@@ -1728,7 +2215,9 @@ class _Parser:
                 _make_pattern({"Y": d.year, "M": d.month, "D": d.day}, "D")
                 for d in sorted(dates)
             )
-            return Atom(patterns, "D", tok.text)
+            return self._parse_postfixed(
+                Atom(patterns, "D", tok.text), allow_endpoint=False
+            )
 
         raise ParseError(
             f"expected '(', '{{', '[' or a number at position {tok.pos}, "
@@ -1804,6 +2293,56 @@ class _Parser:
             patterns = _set_atoms(items, unit, suffix.step)
         actual_unit = max((p.unit for p in patterns), key=_rank)
         return Atom(patterns, actual_unit)
+
+    def _parse_offset_terms(self) -> tuple[int, int]:
+        months = 0
+        minutes = 0
+        seen = False
+        while (
+            self._peek().kind == _NUMBER
+            and self._peek(1).kind == _UNIT
+        ):
+            value = int(self._peek().text)
+            unit = self._peek(1).text
+            if unit == "Y":
+                months += value * 12
+            elif unit == "M":
+                months += value
+            elif unit in ("D", "w", "h", "m"):
+                minutes += value * _factor(unit)
+            else:  # pragma: no cover - lexer only emits known units
+                raise ParseError(f"invalid offset unit {unit!r}")
+            seen = True
+            self.i += 2
+        if not seen:
+            tok = self._peek()
+            raise ParseError(
+                f"expected an offset such as 1D at position {tok.pos}"
+            )
+        return months, minutes
+
+    def _parse_shift(self, expr: Expr, sign: int) -> Expr:
+        if self._match(_LPAREN):
+            months, minutes = self._parse_offset_terms()
+            self._expect(_RPAREN, "')'")
+        else:
+            months, minutes = self._parse_offset_terms()
+        return _Shift(expr, sign * months, sign * minutes)
+
+    def _parse_postfixed(self, expr: Expr, *, allow_endpoint: bool) -> Expr:
+        while True:
+            if allow_endpoint and self._match(_END):
+                expr = _Boundary(expr, "last")
+                continue
+            if allow_endpoint and self._match(_START):
+                expr = _Boundary(expr, "first")
+                continue
+            sign_token = self._match(_PLUS) or self._match(_MINUS)
+            if sign_token is not None:
+                sign = 1 if sign_token.kind == _PLUS else -1
+                expr = self._parse_shift(expr, sign)
+                continue
+            return expr
 
     def _parse_last_node(self, tok: _Token) -> Expr:
         # eY/eM are strictly day-granular.  A time of day is expressed by
@@ -1886,19 +2425,67 @@ def _coerce_now(now: datetime | None, tz: tzinfo) -> datetime:
     return now.astimezone(tz)
 
 
+def _now_atom(pivot: datetime) -> Atom:
+    pattern = Pattern(
+        unit="m",
+        year=pivot.year,
+        month=pivot.month,
+        day=pivot.day,
+        hour=pivot.hour,
+        minute=pivot.minute,
+    )
+    return Atom((pattern,), "m", "now")
+
+
+def _resolve_now(expr: Expr, pivot: datetime) -> Expr:
+    """Replace every ``now`` node with a concrete minute slot at ``pivot``."""
+
+    if isinstance(expr, _Now):
+        return _now_atom(pivot)
+    if isinstance(expr, _Periodic):
+        anchor = expr.anchor
+        if anchor is None:
+            anchor = pivot.replace(second=0, microsecond=0)
+        return _Periodic(expr.months, expr.minutes, anchor)
+    if isinstance(expr, (Atom, _LastNode)):
+        return expr
+    if isinstance(expr, _And):
+        return _And(_resolve_now(expr.left, pivot), _resolve_now(expr.right, pivot))
+    if isinstance(expr, _Or):
+        return _Or(_resolve_now(expr.left, pivot), _resolve_now(expr.right, pivot))
+    if isinstance(expr, _Diff):
+        return _Diff(_resolve_now(expr.left, pivot), _resolve_now(expr.right, pivot))
+    if isinstance(expr, _Cast):
+        return _Cast(_resolve_now(expr.child, pivot), expr.unit)
+    if isinstance(expr, _Boundary):
+        return _Boundary(_resolve_now(expr.child, pivot), expr.mode)
+    if isinstance(expr, _Shift):
+        return _Shift(
+            _resolve_now(expr.child, pivot), expr.months, expr.minutes
+        )
+    return expr
+
+
 def matches(
     expression: str | Expr,
     when: datetime,
     *,
     calendar: HolidayCalendar | None = None,
     tz: tzinfo | None = None,
+    now: datetime | None = None,
 ) -> bool:
-    """Return whether ``when`` is inside the set denoted by ``expression``."""
+    """Return whether ``when`` is inside the set denoted by ``expression``.
+
+    ``now`` is the reference value used by the built-in ``now`` package.  If
+    omitted, the wall clock is used.
+    """
 
     zone = tz if tz is not None else DEFAULT_TZ
     expr = parse(expression, calendar=calendar) if isinstance(expression, str) else expression
     if not isinstance(expr, Expr):
         raise TypeError("expression must be a string or an Expr")
+    pivot = _coerce_now(now, zone) if now is not None else datetime.now(zone)
+    expr = _resolve_now(expr, pivot)
     if expr.is_empty():
         return False
     return expr.covers(_coerce_now(when, zone))
@@ -2025,9 +2612,10 @@ def nearest(
     expr = parse(expression, calendar=calendar) if isinstance(expression, str) else expression
     if not isinstance(expr, Expr):
         raise TypeError("expression must be a string or an Expr")
+    pivot = _coerce_now(now, zone)
+    expr = _resolve_now(expr, pivot)
     if expr.is_empty():
         return None
-    pivot = _coerce_now(now, zone)
     years = _explicit_years(expr)
 
     def next_match() -> datetime | None:
@@ -2080,7 +2668,7 @@ if __name__ == "__main__":  # pragma: no cover - tiny CLI
     import sys
 
     if len(sys.argv) < 2:
-        print("usage: python date_expr.py '<expression>' [ISO datetime]")
+        print("usage: python nearest_date_expr.py '<expression>' [ISO datetime]")
         raise SystemExit(2)
     expr_text = sys.argv[1]
     now_value = (

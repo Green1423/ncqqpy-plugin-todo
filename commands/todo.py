@@ -1,15 +1,18 @@
 """``/todo add|list|set|check|del|bind`` 的业务逻辑。
 
-一条待办对外只有 5 个信息：``id`` / ``title`` / ``content`` / ``remind`` /
-``repeat``。
+一条待办对外有 6 个信息：``id`` / ``title`` / ``content`` / ``remind`` /
+``repeat`` / ``deadline``。
 
 * ``remind``：提醒时间规则表达式；``false`` / 空 = 不提醒；
 * ``repeat``：重复时间规则表达式；``false`` / 空 = 不重复；``true`` = 同
   ``remind`` 用一条表达式；
+* ``deadline``：截止时间（具体时间点）；``false`` / 空 = 无截止；
 * ``content``：提醒文案；空 = 配置里的 ``default_remind``。
 
-两者都是独立的时间规则：``repeat`` 决定待办本身按什么规则重复（打卡时用它
-排下一次），``remind`` 决定什么时候发提醒。``list`` 只读，``check`` 只写。
+``repeat`` 决定待办本身按什么规则重复（打卡时用它排下一次），``remind``
+决定什么时候发提醒，``deadline`` 用于日报里的逾期判断。``deadline`` 与
+``repeat`` 互斥：有截止时间的待办不能同时设重复规则。``list`` 只读，
+``check`` 只写。
 守卫（服务范围白名单）放在每个入口的第一行：被挡下时**静默返回 None**。
 """
 from __future__ import annotations
@@ -18,7 +21,7 @@ from datetime import datetime
 
 from .. import render
 from ..schedule import (
-    DateExprError, advance_from, next_occurrence, now,
+    DateExprError, advance_from, first_occurrence, next_occurrence, now,
     parse_iso, to_iso,
 )
 from napcat.store import StoreError
@@ -28,7 +31,10 @@ from ..store import ChatRef, Todo
 #: `--content` 里这些词表示“恢复默认”。
 _RESET_WORDS = {"-", "默认", "default", "reset", "重置"}
 #: 规则字段里表示 false 的词。
-_FALSE_WORDS = {"-", "false", "0", "no", "off", "none", "无", "不提醒", "不重复", "关"}
+_FALSE_WORDS = {
+    "-", "false", "0", "no", "off", "none", "无", "不提醒", "不重复",
+    "无截止", "不截止", "关",
+}
 #: 规则字段里表示 true 的词（repeat=true → 与 remind 相同）。
 _TRUE_WORDS = {"true", "1", "yes", "on", "是", "提醒", "重复"}
 
@@ -76,7 +82,7 @@ def _resolve_rule(expression: str, label: str,
     if not expr:
         return "", None, ""
     try:
-        upcoming = next_occurrence(expr, moment)
+        upcoming = first_occurrence(expr, moment)
     except DateExprError as exc:
         return "", None, f"{label}无效：{exc}"
     if upcoming is None:
@@ -118,6 +124,11 @@ async def add(plugin, params, event):
         if error:
             return f"⚠️ {error}"
 
+    deadline = (params.deadline
+                if isinstance(params.deadline, datetime) else "")
+    if repeat and deadline:
+        return "⚠️ deadline 和 repeat 互斥：有截止时间的待办不能同时设置重复规则"
+
     active = Todo.objects.filter(chat=chat.key, done=False).count()
     if active >= plugin.max_todos_per_chat():
         return (f"⚠️ 这个会话的待办已达上限（{plugin.max_todos_per_chat()} 条）；"
@@ -134,6 +145,7 @@ async def add(plugin, params, event):
             content=_content_value(str(params.content or "")),
             remind=remind,
             repeat=repeat,
+            deadline=deadline,
             created_at=to_iso(moment),
             next_remind=to_iso(next_remind),
             next_repeat=to_iso(next_repeat),
@@ -224,13 +236,26 @@ async def update(plugin, params, event):
         if new_repeat != todo.repeat:
             changed.append("repeat")
 
+    # ---- deadline ----
+    new_deadline = todo.deadline or ""
+    if params.deadline is not None:
+        parsed_deadline = (params.deadline
+                           if isinstance(params.deadline, datetime) else "")
+        if parsed_deadline != new_deadline:
+            new_deadline = parsed_deadline
+            changed.append("deadline")
+
+    if new_repeat and new_deadline:
+        return "⚠️ deadline 和 repeat 互斥：有截止时间的待办不能同时设置重复规则"
+
     if not changed:
-        return "ℹ️ 没有要修改的字段（可改：title / content / remind / repeat）"
+        return "ℹ️ 没有要修改的字段（可改：title / content / remind / repeat / deadline）"
 
     todo.title = new_title
     todo.content = new_content
     todo.remind = new_remind
     todo.repeat = new_repeat
+    todo.deadline = new_deadline or ""
     todo.next_remind = to_iso(next_remind)
     todo.next_repeat = to_iso(next_repeat)
     try:
@@ -261,7 +286,7 @@ async def delete(plugin, params, event):
 
 
 async def list_todos(plugin, params, event):
-    """只读：列出当前会话的待办；``-a`` / ``--all=true`` 连已完成的一起列出。"""
+    """只读：分页列出当前会话的待办（含已完成，每行只显示编号/标题/状态）。"""
     if _denied(plugin, event):
         return None
     chat = _chat(plugin, event)
