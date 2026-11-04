@@ -10,6 +10,7 @@
 |------|------|
 | `todo.add`   | 添加待办 |
 | `todo.list`  | 查看当前会话待办（含 deadline / 规则，便于模型判断） |
+| `todo.show`  | 查看单条待办的完整信息 |
 | `todo.set`   | 修改待办 |
 | `todo.check` | 完成此项 |
 | `todo.del`   | 删除待办 |
@@ -27,7 +28,7 @@ from napcat.command import SchemaError
 from . import render
 from .commands import todo as todo_cmd
 from .schedule import fmt_datetime
-from .schemas import AddSchema, CheckSchema, DelSchema, SetSchema
+from .schemas import AddSchema, CheckSchema, DelSchema, SetSchema, ShowSchema
 from .store import Todo
 
 #: 写进系统提示的时间表达式速查（模型据此生成 remind / repeat）
@@ -142,6 +143,14 @@ async def _del(plugin, args, ctx=None) -> str:
     return await _call(plugin, ctx, todo_cmd.delete, params)
 
 
+async def _show(plugin, args, ctx=None) -> str:
+    try:
+        params = _validate(ShowSchema, args)
+    except SchemaError as exc:
+        return f"⚠️ 参数不正确：{exc}"
+    return await _call(plugin, ctx, todo_cmd.show, params)
+
+
 async def _list(plugin, args, ctx=None) -> str:
     """AI 版列表：在命令的三列之外补上 deadline / 规则，方便模型判断。"""
     event = _event(ctx)
@@ -244,6 +253,27 @@ def register(plugin) -> None:
     )
     async def list_tool(args, ctx=None):
         return await _list(plugin, args, ctx)
+
+    @reg(
+        "show",
+        description=(
+            "查看当前会话一条待办的完整信息：标题、状态、提醒文案、"
+            "提醒/重复/截止规则、下次时间和创建/完成时间。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "minimum": 1,
+                       "description": "待办编号（先调 todo_list）"},
+            },
+            "required": ["id"],
+        },
+        scope="all",
+        max_chars=3000,
+        prompt_hint="需要看某条待办的完整信息（期限、规则、状态）时，调用 todo_show。",
+    )
+    async def show_tool(args, ctx=None):
+        return await _show(plugin, args, ctx)
 
     @reg(
         "set",

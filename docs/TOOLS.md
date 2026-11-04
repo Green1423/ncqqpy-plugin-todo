@@ -13,6 +13,7 @@ todo 把常用操作注册成 **AI 工具**（`register_tool`）。工具由模�
 |------|--------|------|
 | `todo.add` | `todo_add` | 添加待办 |
 | `todo.list` | `todo_list` | 查看当前会话待办（含编号、状态、截止、规则） |
+| `todo.show` | `todo_show` | 查看单条待办的完整信息 |
 | `todo.set` | `todo_set` | 修改待办 |
 | `todo.check` | `todo_check` | 完成此项 |
 | `todo.del` | `todo_del` | 删除待办 |
@@ -43,6 +44,14 @@ todo 把常用操作注册成 **AI 工具**（`register_tool`）。工具由模�
 
 工具版列表比命令版多返回 `截止=`、`提醒=`、`重复=`，方便模型在完成/修改前判断。
 
+### `todo_show`
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `id` | 是 | 待办编号（先通过 `todo_list` 获取） |
+
+返回标题、状态、提醒文案、提醒/重复/截止规则、下次时间和创建/完成时间。
+
 ### `todo_set`
 
 `id` 必填；其余字段只传要改的：
@@ -69,6 +78,10 @@ todo 把常用操作注册成 **AI 工具**（`register_tool`）。工具由模�
 
 ```json
 {"name": "todo_list", "arguments": {"page": 1}}
+```
+
+```json
+{"name": "todo_show", "arguments": {"id": 3}}
 ```
 
 ```json

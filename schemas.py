@@ -19,7 +19,7 @@ from .schedule import TZ
 
 __all__ = [
     "AddSchema", "ListSchema", "SetSchema", "DelSchema", "CheckSchema",
-    "BindSchema",
+    "ShowSchema", "BindSchema",
 ]
 
 
@@ -52,6 +52,11 @@ class SetSchema(CommandSchema):
                       description="新的重复规则（省略 = 不改；false / - = 不重复；true = 同 remind）")
     deadline = DatetimeField(default=None, tz=TZ,
                              description="新的截止时间（YYYY-MM-DD HH:MM；省略 = 不改；false / - = 清除）")
+
+
+class ShowSchema(CommandSchema):
+    id = IntField(required=True, min=1,
+                  description="要查看的待办编号（见 /todo list）")
 
 
 class DelSchema(CommandSchema):

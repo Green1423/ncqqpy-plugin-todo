@@ -305,6 +305,20 @@ async def list_todos(plugin, params, event):
     return render.list_text(items, page=page, pages=pages, total=total)
 
 
+async def show(plugin, params, event):
+    """查看当前会话单条待办的完整信息。"""
+    if _denied(plugin, event):
+        return None
+    chat = _chat(plugin, event)
+    if chat is None:
+        return "⚠️ 无法确定会话（拿不到群号 / QQ 号），请从群聊或私聊里重试"
+
+    todo = Todo.objects.filter(chat=chat.key, id=int(params.id)).first()
+    if todo is None:
+        return f"❌ 当前会话没有待办 #{params.id}（用 /todo list 查看编号）"
+    return render.show_text(todo)
+
+
 async def check(plugin, params, event):
     if _denied(plugin, event):
         return None

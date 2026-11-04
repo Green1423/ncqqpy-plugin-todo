@@ -438,8 +438,9 @@ async def test_ai_tools() -> None:
         await env.start()
         reg = env.plugin.plugin_tools
         names = {item.name for item in reg.list(exclude="ai_chat")}
-        check("注册 5 个 todo 工具", {
-            "todo.add", "todo.list", "todo.set", "todo.check", "todo.del",
+        check("注册 6 个 todo 工具", {
+            "todo.add", "todo.list", "todo.show", "todo.set", "todo.check",
+            "todo.del",
         } <= names, str(names))
 
         add_tool = reg.get("todo.add")
@@ -467,6 +468,9 @@ async def test_ai_tools() -> None:
         text = await call_tool(reg.get("todo.list"), {}, ctx)
         check("tool list 返回编号和截止",
               f"#{todo.pk}" in text and "截止=" in text, text)
+        text = await call_tool(reg.get("todo.show"), {"id": todo.pk}, ctx)
+        check("tool show 返回完整信息",
+              f"📋 待办 #{todo.pk}" in text and "标题：AI 待办" in text, text)
 
         text = await call_tool(reg.get("todo.set"), {
             "id": todo.pk, "deadline": "false", "repeat": "1w",
@@ -489,6 +493,43 @@ async def test_ai_tools() -> None:
         text = await call_tool(reg.get("todo.add"), {"title": "越权"},
                                 denied_ctx)
         check("tool 仍受服务范围限制", "没有开通" in text, text)
+    finally:
+        await env.close()
+
+
+async def test_show() -> None:
+    print("\n[4.0] show 查看单条待办")
+    env = Env(page_size=10)
+    try:
+        await env.start()
+        text = await env.ask('/todo add 展示 "提醒内容" "8h" "8h"')
+        check("show 前先添加", "已添加待办 #1" in text, text)
+        text = await env.ask("/todo show 1")
+        check("show 返回编号/标题/状态",
+              "📋 待办 #1" in text and "标题：展示" in text
+              and "状态：未完成" in text, text)
+        check("show 返回文案与两条规则",
+              "提醒文案：提醒内容" in text and "提醒规则：8h" in text
+              and "重复规则：8h" in text, text)
+        check("show 返回下次时间与创建时间",
+              "下次提醒：" in text and "下次重复：" in text
+              and "创建时间：" in text, text)
+
+        await env.ask("/todo check 1")
+        text = await env.ask("/todo show 1")
+        check("show 已完成项", "状态：已完成" in text and "完成时间：" in text,
+              text)
+
+        await env.ask('/todo add 截止展示 --deadline="2026-11-12 18:00"')
+        text = await env.ask("/todo show 2")
+        check("show 显示截止时间", "截止时间：2026-11-12 18:00" in text,
+              text)
+        check("show 显示不重复", "重复规则：不重复" in text, text)
+
+        text = await env.ask("/todo show 999")
+        check("show 不存在编号有提示", "没有待办" in text, text)
+        text = await env.ask("/todo show")
+        check("show 必须带编号", "用法不正确" in text, text)
     finally:
         await env.close()
 

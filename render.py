@@ -7,8 +7,8 @@ from .schedule import TZ, fmt_datetime, parse_iso
 from .store import Todo
 
 __all__ = [
-    "clip", "todo_line", "list_text", "detail_text", "reminder_text",
-    "summary_text", "binding_text",
+    "clip", "todo_line", "list_text", "detail_text", "show_text",
+    "reminder_text", "summary_text", "binding_text",
 ]
 
 
@@ -73,6 +73,32 @@ def detail_text(todo: Todo, *, verb: str = "已添加") -> str:
         lines.append(f"下次提醒：{fmt_datetime(todo.remind_at)}")
     if todo.next_repeat:
         lines.append(f"下次重复：{fmt_datetime(todo.repeat_at)}")
+    return "\n".join(lines)
+
+
+def show_text(todo: Todo) -> str:
+    """``/todo show`` 的单条完整信息。"""
+    deadline = _deadline(todo)
+    lines = [
+        f"📋 待办 #{todo.id}",
+        f"标题：{todo.title or '待办'}",
+        f"状态：{'已完成' if todo.done else '未完成'}",
+    ]
+    lines.append("提醒文案：" + (todo.content or "（默认）"))
+    lines.append(f"提醒规则：{todo.remind or '不提醒'}")
+    lines.append(f"重复规则：{todo.repeat or '不重复'}")
+    lines.append("截止时间：" + (fmt_datetime(deadline) if deadline else "无"))
+    lines.append(f"下次提醒：{fmt_datetime(todo.remind_at)}"
+                 if todo.next_remind else "下次提醒：无")
+    lines.append(f"下次重复：{fmt_datetime(todo.repeat_at)}"
+                 if todo.next_repeat else "下次重复：无")
+    created = parse_iso(todo.created_at)
+    if created is not None:
+        lines.append(f"创建时间：{fmt_datetime(created)}")
+    if todo.done:
+        finished = parse_iso(todo.done_at or todo.checked_at)
+        if finished is not None:
+            lines.append(f"完成时间：{fmt_datetime(finished)}")
     return "\n".join(lines)
 
 

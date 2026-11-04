@@ -195,7 +195,27 @@ id / title / content / remind / repeat / deadline
 
 ---
 
-## 4. `/todo set`：修改
+## 4. `/todo show`：完整信息
+
+```text
+/todo show <id>
+```
+
+返回当前会话某条待办的完整信息：
+
+- 编号、标题、状态（已完成 / 未完成）；
+- 提醒文案、提醒规则、重复规则、截止时间；
+- 下次提醒、下次重复、创建时间、完成时间（如有）。
+
+示例：
+
+```text
+/todo show 3
+```
+
+编号从 `/todo list` 或 `todo_list` 工具获取；跨会话不能查看。
+
+## 5. `/todo set`：修改
 
 ```text
 /todo set <id> [title] [content] [remind] [repeat] [deadline]
@@ -234,7 +254,7 @@ id / title / content / remind / repeat / deadline
 
 ---
 
-## 5. `/todo check`：完成此项
+## 6. `/todo check`：完成此项
 
 ```text
 /todo check <id>
@@ -260,7 +280,7 @@ id / title / content / remind / repeat / deadline
 
 ---
 
-## 6. `/todo del`：删除
+## 7. `/todo del`：删除
 
 ```text
 /todo del <id>
@@ -272,7 +292,7 @@ id / title / content / remind / repeat / deadline
 
 ---
 
-## 7. `/todo bind`：服务范围
+## 8. `/todo bind`：服务范围
 
 ```text
 /todo bind [list|add|del] [group|user] [群号/QQ号]
@@ -293,7 +313,7 @@ id / title / content / remind / repeat / deadline
 
 ---
 
-## 8. 每日日报
+## 9. 每日日报
 
 默认每天 `22:00` 按会话发送一条日报：
 
@@ -311,7 +331,7 @@ id / title / content / remind / repeat / deadline
 改完 `summary_time` 后重载插件生效；时间按本机时区解释。截止时间用
 `deadline` 字段设置，参见 2.4。
 
-## 9. 常见问题
+## 10. 常见问题
 
 ### Q1. 为什么 `/todo check` 后还显示“已完成”？
 
@@ -375,7 +395,7 @@ id / title / content / remind / repeat / deadline
 
 ---
 
-## 10. 相关文档
+## 11. 相关文档
 
 - [时间表达式用户手册](TIME_EXPRESSIONS.md)
 - [表达式引擎规则](DATE_EXPR_RULES.md)

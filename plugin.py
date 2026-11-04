@@ -41,6 +41,7 @@ from .jobs import summary as summary_job
 from .schedule import now, parse_iso
 from .schemas import (
     AddSchema, BindSchema, CheckSchema, DelSchema, ListSchema, SetSchema,
+    ShowSchema,
 )
 from .store import ChatRef, Todo, import_legacy_json
 
@@ -143,7 +144,7 @@ class TodoPlugin(PluginBase):
             return self.register_command(name, **kwargs)
 
         @reg("todo", aliases=["待办"], permission="", scope="all",
-             description="待办与周期提醒：add / list / set / check / del")
+             description="待办与周期提醒：add / list / show / set / check / del")
         async def cmd_root(packet):
             # 命令组本体不会被执行：裸调由框架重定向到 /help todo。
             return None
@@ -157,6 +158,11 @@ class TodoPlugin(PluginBase):
              description="分页查看待办（编号 / 标题 / 是否完成，含已完成）")
         async def cmd_list(params, event):
             return await todo_cmd.list_todos(self, params, event)
+
+        @reg("todo.show", schema=ShowSchema, permission="", scope="all",
+             description="查看单条待办的完整信息")
+        async def cmd_show(params, event):
+            return await todo_cmd.show(self, params, event)
 
         @reg("todo.set", schema=SetSchema, permission="", scope="all",
              description="修改待办的标题 / 文案 / 提醒 / 重复 / 截止时间")
