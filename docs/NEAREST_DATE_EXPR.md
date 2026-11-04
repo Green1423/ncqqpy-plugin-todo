@@ -9,7 +9,7 @@
 实现文件：
 
 - 本插件内置副本：[date_expr.py](../date_expr.py)
-- 插件验收测试：[tests/test_todo.py](../../../tests/test_todo.py)
+- 插件验收测试：[tests/test_todo.py](../tests/test_todo.py)
 - 上游引擎的独立测试不在插件包内
 
 只使用 Python 标准库，不依赖目录里的其他脚本。

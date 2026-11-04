@@ -30,6 +30,21 @@ from .schedule import fmt_datetime
 from .schemas import AddSchema, CheckSchema, DelSchema, SetSchema
 from .store import Todo
 
+#: 写进系统提示的时间表达式速查（模型据此生成 remind / repeat）
+TIME_RULES = (
+    "时间表达式规则（remind / repeat）："
+    "`8h`=每天08:00，`1w`=每周一09:00，`1D`=每月1日09:00；"
+    "`[1,5]w & {8h}`=工作日08:00，`[6,7]w`=周末09:00，`eM`=每月最后一天；"
+    "`2026Y12M31D23h59m`=只发生一次。"
+    "`&`交集、`|`并集、`!`差集；`{...}`列举、`[...]`范围；"
+    "`+1D`=从当前起每隔1天，`+6h`=每6小时，`+1D & {7h}`=每天07:00；"
+    "`hol`=官方放假天，`hol|lil`=所有放假天，`wil`=调休上班，"
+    "普通周末要写 `[6,7]w`。"
+    "remind 到点后按同一规则续排；repeat 到点把已完成的待办重新打开并重排提醒，"
+    "`repeat=true` 同 remind；false/空=不重复；"
+    "deadline 是具体时间且与 repeat 互斥。"
+)
+
 
 def _coerce(args: Any) -> dict[str, str]:
     """JSON 参数 → Schema 需要的字符串参数。"""
@@ -185,8 +200,8 @@ def register(plugin) -> None:
         "add",
         description=(
             "在当前会话添加一条待办。title 必填；content 是提醒文案；"
-            "remind/repeat 是 learn 时间表达式；deadline 是具体时间"
-            "（YYYY-MM-DD HH:MM，deadline 与 repeat 互斥）。"
+            "remind/repeat 用时间表达式（规则已随工具提示给出）；"
+            "deadline 是具体时间（YYYY-MM-DD HH:MM，deadline 与 repeat 互斥）。"
         ),
         parameters={
             "type": "object",
@@ -194,9 +209,9 @@ def register(plugin) -> None:
                 "title": {"type": "string", "description": "待办标题（必填）"},
                 "content": {"type": "string", "description": "提醒文案；省略用默认文案"},
                 "remind": {"type": "string",
-                           "description": "提醒时间表达式，如 8h / 1w & {18h} / +1D；false 或省略 = 不提醒"},
+                           "description": "提醒表达式，如 8h（每天8点）/ [1,5]w & {8h}（工作日8点）/ +1D（每隔1天）；false 或省略 = 不提醒"},
                 "repeat": {"type": "string",
-                           "description": "重复时间表达式；false 或省略 = 不重复；与 deadline 互斥"},
+                           "description": "重复表达式，写法同 remind；false 或省略 = 不重复；true = 同 remind；与 deadline 互斥"},
                 "deadline": {"type": "string",
                              "description": "截止时间，如 2026-11-10 18:00；只写日期按 23:59；与 repeat 互斥"},
             },
@@ -204,7 +219,8 @@ def register(plugin) -> None:
         },
         scope="all",
         max_chars=3000,
-        prompt_hint="用户让你记待办、设提醒、加截止时间时，调用 todo_add。",
+        prompt_hint=("用户让你记待办、设提醒、加截止时间时，调用 todo_add。"
+                     + TIME_RULES),
     )
     async def add(args, ctx=None):
         return await _add(plugin, args, ctx)
@@ -233,6 +249,7 @@ def register(plugin) -> None:
         "set",
         description=(
             "修改当前会话的一条待办。id 必填；只传要改的字段。"
+            "remind/repeat 的写法与 todo_add 相同；"
             "deadline 与 repeat 互斥；deadline 用具体时间，不是表达式。"
         ),
         parameters={
@@ -242,8 +259,8 @@ def register(plugin) -> None:
                        "description": "待办编号（先调 todo_list）"},
                 "title": {"type": "string", "description": "新标题"},
                 "content": {"type": "string", "description": "新提醒文案；- = 恢复默认"},
-                "remind": {"type": "string", "description": "新提醒表达式；false = 不提醒"},
-                "repeat": {"type": "string", "description": "新重复表达式；false = 不重复；与 deadline 互斥"},
+                "remind": {"type": "string", "description": "新提醒表达式（写法同 todo_add）；false = 不提醒"},
+                "repeat": {"type": "string", "description": "新重复表达式（写法同 todo_add）；false = 不重复；与 deadline 互斥"},
                 "deadline": {"type": "string",
                              "description": "新截止时间；false = 清除；与 repeat 互斥"},
             },
@@ -251,7 +268,7 @@ def register(plugin) -> None:
         },
         scope="all",
         max_chars=3000,
-        prompt_hint="用户要改待办标题、提醒、重复或截止时间时，调用 todo_set。",
+        prompt_hint="用户要改待办标题、提醒、重复或截止时间时，调用 todo_set；表达式规则见 todo_add。",
     )
     async def set_tool(args, ctx=None):
         return await _set(plugin, args, ctx)

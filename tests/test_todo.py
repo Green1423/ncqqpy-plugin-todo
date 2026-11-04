@@ -442,6 +442,16 @@ async def test_ai_tools() -> None:
             "todo.add", "todo.list", "todo.set", "todo.check", "todo.del",
         } <= names, str(names))
 
+        add_tool = reg.get("todo.add")
+        hint = str(getattr(add_tool, "prompt_hint", ""))
+        check("todo_add 提示含表达式速查",
+              "8h" in hint and "eM" in hint and "repeat=true" in hint,
+              hint[:120])
+        remind_desc = str(add_tool.parameters["properties"]["remind"].get(
+            "description", ""))
+        check("remind 参数带表达式示例",
+              "8h" in remind_desc and "+1D" in remind_desc, remind_desc)
+
         ctx = SimpleNamespace(in_group=False, user_id=SUPERUSER,
                               chat_id=SUPERUSER, group_id=None,
                               is_superuser=True)

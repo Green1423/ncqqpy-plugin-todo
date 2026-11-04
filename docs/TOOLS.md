@@ -29,6 +29,12 @@ todo 把常用操作注册成 **AI 工具**（`register_tool`）。工具由模�
 | `repeat` | 否 | 重复表达式；与 `deadline` 互斥 |
 | `deadline` | 否 | 具体时间，如 `2026-11-10 18:00`；与 `repeat` 互斥 |
 
+### 时间表达式
+
+`todo_add` / `todo_set` 的**工具提示**里带了表达式速查（每天 / 每周 / 每月 /
+间隔 / 假期 / 一次性），模型可以直接照写 `remind` / `repeat`，不需要先查文档。
+完整规则见 [TIME_EXPRESSIONS.md](TIME_EXPRESSIONS.md)。
+
 ### `todo_list`
 
 | 参数 | 必填 | 说明 |

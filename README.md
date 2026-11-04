@@ -48,6 +48,7 @@ git clone https://github.com/Green1423/ncqqpy-plugin-todo plugins/todo
 | `（无）` | 全部配置在 `config.json → plugins.todo` |
 
 
+详细文档：[`docs/README.md`](docs/README.md)。
 ## 测试
 
 ```bash
