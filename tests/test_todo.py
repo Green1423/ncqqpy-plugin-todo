@@ -448,10 +448,17 @@ async def test_ai_tools() -> None:
         check("todo_add 提示含表达式速查",
               "8h" in hint and "eM" in hint and "repeat=true" in hint,
               hint[:120])
+        check("提示说明 {eM} 非法",
+              "{eM}" in hint and "不要包成" in hint, hint[:200])
+        check("提示说明端点 e 的边界",
+              "(hol|lil)e" in hint and "{10h,15h}" in hint, hint[:200])
         remind_desc = str(add_tool.parameters["properties"]["remind"].get(
             "description", ""))
         check("remind 参数带表达式示例",
               "8h" in remind_desc and "+1D" in remind_desc, remind_desc)
+        check("remind 参数说明 eM 与 {eM} 非法",
+              "eM=每月最后一天" in remind_desc and "{eM} 非法" in remind_desc,
+              remind_desc)
 
         ctx = SimpleNamespace(in_group=False, user_id=SUPERUSER,
                               chat_id=SUPERUSER, group_id=None,
@@ -554,9 +561,12 @@ async def test_deadline_summary() -> None:
               env.model().objects.get(pk=1).deadline is None)
 
         text = await env.ask('/todo set 1 --deadline="2026-11-12"')
-        check("只写日期按当天 23:59",
+        check("只写日期按当天结束",
               env.model().objects.get(pk=1).deadline.hour == 23
-              and env.model().objects.get(pk=1).deadline.minute == 59, text)
+              and env.model().objects.get(pk=1).deadline.minute == 59
+              and env.model().objects.get(pk=1).deadline.second == 59
+              and env.model().objects.get(pk=1).deadline.microsecond == 999999,
+              text)
 
         text = await env.ask(
             '/todo add 互斥 --repeat="1w" --deadline="2026-11-10 18:00"')

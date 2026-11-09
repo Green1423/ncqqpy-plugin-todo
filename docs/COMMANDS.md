@@ -67,7 +67,7 @@ id / title / content / remind / repeat / deadline
 | `content` | 提醒文案，最多 500 字；省略 = 配置 `default_remind`；`-` = 恢复默认 |
 | `remind` | 提醒时间规则；`false` / 省略 = 不提醒 |
 | `repeat` | 重复时间规则；`false` / 省略 = 不重复；`true` = 同 `remind` |
-| `deadline` | 截止时间（`YYYY-MM-DD HH:MM`；只写日期按 23:59）；`false` / 省略 = 无截止；与 `repeat` 互斥 |
+| `deadline` | 截止时间（`YYYY-MM-DD HH:MM`；只写日期按当天结束）；`false` / 省略 = 无截止；与 `repeat` 互斥 |
 
 ### 2.1 最小用法
 
@@ -110,7 +110,7 @@ id / title / content / remind / repeat / deadline
 ```
 
 - `deadline` 是**具体时间点**（`DateTimeField`），不是时间表达式；
-- 写法：`YYYY-MM-DD HH:MM`，也接受 ISO 8601；只写日期按当天 23:59；
+- 写法：`YYYY-MM-DD HH:MM`，也接受 ISO 8601；只写日期按当天结束（`23:59:59.999999`）；
 - 它不发送提醒，只在每日日报里用于判断“截止时间 / 已逾期”；
 - **与 `repeat` 互斥**：有截止时间的待办不能同时设重复规则；要切换请先清掉一个；
 - 修改：`/todo set <id> --deadline="2026-11-15 18:00"`；清除：`--deadline=false`。

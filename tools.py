@@ -33,17 +33,23 @@ from .store import Todo
 
 #: 写进系统提示的时间表达式速查（模型据此生成 remind / repeat）
 TIME_RULES = (
-    "时间表达式规则（remind / repeat）："
+    "时间表达式（remind/repeat，来自 learn）："
     "`8h`=每天08:00，`1w`=每周一09:00，`1D`=每月1日09:00；"
-    "`[1,5]w & {8h}`=工作日08:00，`[6,7]w`=周末09:00，`eM`=每月最后一天；"
+    "`[1,5]w & {8h}`=工作日08:00，`[6,7]w`=周末09:00；"
+    "`eM`=每月最后一天，`eM & {20h}`=最后一天20:00；"
     "`2026Y12M31D23h59m`=只发生一次。"
-    "`&`交集、`|`并集、`!`差集；`{...}`列举、`[...]`范围；"
-    "`+1D`=从当前起每隔1天，`+6h`=每6小时，`+1D & {7h}`=每天07:00；"
-    "`hol`=官方放假天，`hol|lil`=所有放假天，`wil`=调休上班，"
-    "普通周末要写 `[6,7]w`。"
-    "remind 到点后按同一规则续排；repeat 到点把已完成的待办重新打开并重排提醒，"
-    "`repeat=true` 同 remind；false/空=不重复；"
-    "deadline 是具体时间且与 repeat 互斥。"
+    "`&`交集、`|`并集、`!`差集；`{...}`数字集合、`[...]`范围；"
+    "`+1D`=每隔1天，`+6h`=每6小时，`+1D & {7h}`=每天07:00。"
+    "`eM`/`eY`/`now` 是原子，直接写；不要包成 `{eM}`/`{eY}`/`{now}`。"
+    "`(hol|lil)e`=每段官方假期的最后一天，`(hol|lil)s`=第一天；端点只能写在括号后，"
+    "纯时间集合如 `{10h,15h}` 日期无限，`e` 无结果；限定某天用 "
+    "`(2026Y11M10D & {10h,15h})e`。"
+    "`hol`=官方放假天，`hol|lil`=所有放假天，`wil`=调休上班；"
+    "普通周末写 `[6,7]w`，不要用 `hol` 代替周末。"
+    "remind 到点后按同一规则续排；repeat 到点把已完成的待办重新打开并重排提醒；"
+    "`repeat=true` 同 remind；false/空=关闭。"
+    "deadline 是具体时间（YYYY-MM-DD HH:MM，日期-only 按当天结束），"
+    "不是表达式，且与 repeat 互斥。"
 )
 
 
@@ -209,8 +215,8 @@ def register(plugin) -> None:
         "add",
         description=(
             "在当前会话添加一条待办。title 必填；content 是提醒文案；"
-            "remind/repeat 用时间表达式（规则已随工具提示给出）；"
-            "deadline 是具体时间（YYYY-MM-DD HH:MM，deadline 与 repeat 互斥）。"
+            "remind/repeat 用 learn 时间表达式（速查见工具提示）；"
+            "deadline 是具体时间，不是表达式，且与 repeat 互斥。"
         ),
         parameters={
             "type": "object",
@@ -218,11 +224,11 @@ def register(plugin) -> None:
                 "title": {"type": "string", "description": "待办标题（必填）"},
                 "content": {"type": "string", "description": "提醒文案；省略用默认文案"},
                 "remind": {"type": "string",
-                           "description": "提醒表达式，如 8h（每天8点）/ [1,5]w & {8h}（工作日8点）/ +1D（每隔1天）；false 或省略 = 不提醒"},
+                           "description": "提醒表达式：8h=每天8点；eM=每月最后一天；eM & {20h}=最后一天20点；+1D=每隔1天；false/省略=不提醒；{eM} 非法"},
                 "repeat": {"type": "string",
-                           "description": "重复表达式，写法同 remind；false 或省略 = 不重复；true = 同 remind；与 deadline 互斥"},
+                           "description": "重复表达式，写法同 remind；repeat=true=同 remind；false/省略=不重复；与 deadline 互斥"},
                 "deadline": {"type": "string",
-                             "description": "截止时间，如 2026-11-10 18:00；只写日期按 23:59；与 repeat 互斥"},
+                             "description": "具体截止时间，如 2026-11-10 18:00；只写日期按当天结束；不是表达式；与 repeat 互斥"},
             },
             "required": ["title"],
         },
@@ -292,7 +298,7 @@ def register(plugin) -> None:
                 "remind": {"type": "string", "description": "新提醒表达式（写法同 todo_add）；false = 不提醒"},
                 "repeat": {"type": "string", "description": "新重复表达式（写法同 todo_add）；false = 不重复；与 deadline 互斥"},
                 "deadline": {"type": "string",
-                             "description": "新截止时间；false = 清除；与 repeat 互斥"},
+                             "description": "新截止时间（具体时间，不是表达式）；false = 清除；与 repeat 互斥"},
             },
             "required": ["id"],
         },
