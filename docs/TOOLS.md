@@ -29,6 +29,7 @@ todo 把常用操作注册成 **AI 工具**（`register_tool`）。工具由模�
 | `remind` | 否 | 提醒表达式，如 `8h`、`1w & {18h}`、`+1D` |
 | `repeat` | 否 | 重复表达式；与 `deadline` 互斥 |
 | `deadline` | 否 | 具体时间，如 `2026-11-10 18:00`；与 `repeat` 互斥 |
+| `visible` | 否 | 是否显示在列表/日报；`false` 隐藏（仍提醒），默认 true |
 
 ### 时间表达式
 
@@ -56,7 +57,8 @@ todo 把常用操作注册成 **AI 工具**（`register_tool`）。工具由模�
 |------|------|------|
 | `page` | 否 | 页码，默认 1；每页条数由 `list_page_size` 控制 |
 
-工具版列表比命令版多返回 `截止=`、`提醒=`、`重复=`，方便模型在完成/修改前判断。
+工具版列表比命令版多返回 `截止=`、`提醒=`、`重复=`；隐藏项还会标
+`可见=否`，排序同样是可见项在前。
 
 ### `todo_show`
 
@@ -70,9 +72,10 @@ todo 把常用操作注册成 **AI 工具**（`register_tool`）。工具由模�
 
 `id` 必填；其余字段只传要改的：
 
-`title`、`content`、`remind`、`repeat`、`deadline`。
+`title`、`content`、`remind`、`repeat`、`deadline`、`visible`。
 
 `deadline=false` 清除截止；`repeat=false` 清除重复。二者互斥。
+`visible=false` 隐藏此条（不进入日报，列表排在可见项之后），仍会提醒。
 
 ### `todo_check` / `todo_del`
 

@@ -1,8 +1,9 @@
 """待办的 ORM 模型（``napcat.store``）。
 
-一条待办对外有 6 个信息：``id`` / ``title`` / ``content`` / ``remind`` /
-``repeat`` / ``deadline``。``remind`` / ``repeat`` 是时间规则表达式字符串；
-``deadline`` 是具体时间点（``DateTimeField``），与 ``repeat`` 互斥。
+一条待办对外有 7 个信息：``id`` / ``title`` / ``content`` / ``remind`` /
+``repeat`` / ``deadline`` / ``visible``。``remind`` / ``repeat`` 是时间规则
+表达式字符串；``deadline`` 是具体时间点（``DateTimeField``），与 ``repeat``
+互斥；``visible=false`` 不进入每日总结，列表里排到可见项后面。
 ``next_remind``、``next_repeat``、``done`` 等是调度与展示用的内部列。
 
 表由框架的 ``PluginBase.database(ensure=[Todo])`` 建在
@@ -37,11 +38,12 @@ class ChatRef:
 class Todo(Model):
     """一条待办。
 
-    对外有 6 个字段；其余列是调度与状态元数据。
+    对外有 7 个字段；其余列是调度与状态元数据。
 
     * ``remind`` 为空 = 不提醒；否则是提醒时间规则表达式。
     * ``repeat`` 为空 = 不重复；否则是重复时间规则表达式。
     * ``deadline`` 为空 = 无截止；否则是一个具体时间点，且与 ``repeat`` 互斥。
+    * ``visible=False`` 不进入每日总结，列表中排在可见项之后。
     """
 
     class Meta:
@@ -58,6 +60,7 @@ class Todo(Model):
     remind = CharField(max_length=160, default="")
     repeat = CharField(max_length=160, default="")
     deadline = DateTimeField(default="")
+    visible = BooleanField(default=True)
 
     created_at = CharField(max_length=40, default="")
     next_remind = CharField(max_length=40, default="")

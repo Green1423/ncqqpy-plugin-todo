@@ -27,19 +27,19 @@
 
 ---
 
-## 1. 六个信息与参数顺序
+## 1. 七个信息与参数顺序
 
 一条待办有：
 
 ```text
-id / title / content / remind / repeat / deadline
+id / title / content / remind / repeat / deadline / visible
 ```
 
 命令里的位置顺序固定为：
 
 ```text
-/todo add  <title> [content] [remind] [repeat] [deadline]
-/todo set  <id> [title] [content] [remind] [repeat] [deadline]
+/todo add  <title> [content] [remind] [repeat] [deadline] [visible]
+/todo set  <id> [title] [content] [remind] [repeat] [deadline] [visible]
 ```
 
 - `<...>` 必填，`[...]` 可选，尖括号 / 方括号本身不用输入；
@@ -58,7 +58,7 @@ id / title / content / remind / repeat / deadline
 ## 2. `/todo add`：添加
 
 ```text
-/todo add <title> [content] [remind] [repeat] [deadline]
+/todo add <title> [content] [remind] [repeat] [deadline] [visible]
 ```
 
 | 参数 | 说明 |
@@ -68,6 +68,7 @@ id / title / content / remind / repeat / deadline
 | `remind` | 提醒时间规则；`false` / 省略 = 不提醒 |
 | `repeat` | 重复时间规则；`false` / 省略 = 不重复；`true` = 同 `remind` |
 | `deadline` | 截止时间（`YYYY-MM-DD HH:MM`；只写日期按当天结束）；`false` / 省略 = 无截止；与 `repeat` 互斥 |
+| `visible` | 是否显示在列表和每日总结；`false` = 隐藏（仍会提醒）；省略 = 显示 |
 
 ### 2.1 最小用法
 
@@ -204,7 +205,7 @@ id / title / content / remind / repeat / deadline
 返回当前会话某条待办的完整信息：
 
 - 编号、标题、状态（已完成 / 未完成）；
-- 提醒文案、提醒规则、重复规则、截止时间；
+- 提醒文案、提醒规则、重复规则、截止时间、可见性；
 - 下次提醒、下次重复、创建时间、完成时间（如有）。
 
 示例：
@@ -218,7 +219,7 @@ id / title / content / remind / repeat / deadline
 ## 5. `/todo set`：修改
 
 ```text
-/todo set <id> [title] [content] [remind] [repeat] [deadline]
+/todo set <id> [title] [content] [remind] [repeat] [deadline] [visible]
 ```
 
 所有字段都是“省略 = 不改”。只改给出的字段，未给出的保持原值。
@@ -230,6 +231,7 @@ id / title / content / remind / repeat / deadline
 | `remind` | 新提醒规则；省略 = 不改；`false` / `-` = 不提醒 |
 | `repeat` | 新重复规则；省略 = 不改；`false` / `-` = 不重复；`true` = 同 `remind` |
 | `deadline` | 新截止时间；省略 = 不改；`false` / `-` = 清除；与 `repeat` 互斥 |
+| `visible` | 新可见性；省略 = 不改；`false` = 隐藏 |
 
 示例：
 
@@ -241,6 +243,7 @@ id / title / content / remind / repeat / deadline
 /todo set 1 --content="新的提醒文案"
 /todo set 1 --deadline="2026-11-15 18:00"
 /todo set 1 --deadline=false
+/todo set 1 --visible=false
 ```
 
 注意：
@@ -249,6 +252,7 @@ id / title / content / remind / repeat / deadline
 - `repeat=true` 需要当前（或同一条命令里新设置的）`remind` 非空；
 - 改 `remind` 会重新计算下一次提醒；改 `repeat` 会重新计算下一次重开；
 - 只改标题 / 文案不会重置已有的下次时间；
+- `visible=false` 不影响提醒 / 重复，只影响列表排序和每日总结；
 - 截止时间只影响日报里的逾期判断，不改变提醒 / 重复时间；
 - 同一个待办不能同时有 `deadline` 和 `repeat`。
 
@@ -317,7 +321,7 @@ id / title / content / remind / repeat / deadline
 
 默认每天 `22:00` 按会话发送一条日报：
 
-- 今天完成数、当前未完成数、已逾期数；
+- 今天完成数、当前未完成数、已逾期数；`visible=false` 的条目不参与统计；
 - 未完成项的编号、标题、截止时间（最多 10 条）；
 - 只有今天有完成记录或还有未完成待办的会话才发送。
 

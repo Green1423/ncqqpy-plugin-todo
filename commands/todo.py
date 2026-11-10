@@ -1,12 +1,13 @@
 """``/todo add|list|set|check|del|bind`` 的业务逻辑。
 
-一条待办对外有 6 个信息：``id`` / ``title`` / ``content`` / ``remind`` /
-``repeat`` / ``deadline``。
+一条待办对外有 7 个信息：``id`` / ``title`` / ``content`` / ``remind`` /
+``repeat`` / ``deadline`` / ``visible``。
 
 * ``remind``：提醒时间规则表达式；``false`` / 空 = 不提醒；
 * ``repeat``：重复时间规则表达式；``false`` / 空 = 不重复；``true`` = 同
   ``remind`` 用一条表达式；
 * ``deadline``：截止时间（具体时间点）；``false`` / 空 = 无截止；
+* ``visible``：``false`` 不进入每日总结，列表中排在可见项后面；
 * ``content``：提醒文案；空 = 配置里的 ``default_remind``。
 
 ``repeat`` 决定待办本身按什么规则重复（打卡时用它排下一次），``remind``
@@ -126,6 +127,7 @@ async def add(plugin, params, event):
 
     deadline = (params.deadline
                 if isinstance(params.deadline, datetime) else "")
+    visible = bool(params.visible) if params.visible is not None else True
     if repeat and deadline:
         return "⚠️ deadline 和 repeat 互斥：有截止时间的待办不能同时设置重复规则"
 
@@ -146,6 +148,7 @@ async def add(plugin, params, event):
             remind=remind,
             repeat=repeat,
             deadline=deadline,
+            visible=visible,
             created_at=to_iso(moment),
             next_remind=to_iso(next_remind),
             next_repeat=to_iso(next_repeat),
@@ -248,14 +251,21 @@ async def update(plugin, params, event):
     if new_repeat and new_deadline:
         return "⚠️ deadline 和 repeat 互斥：有截止时间的待办不能同时设置重复规则"
 
+    new_visible = todo.visible
+    if params.visible is not None:
+        new_visible = bool(params.visible)
+        if new_visible != todo.visible:
+            changed.append("visible")
+
     if not changed:
-        return "ℹ️ 没有要修改的字段（可改：title / content / remind / repeat / deadline）"
+        return "ℹ️ 没有要修改的字段（可改：title / content / remind / repeat / deadline / visible）"
 
     todo.title = new_title
     todo.content = new_content
     todo.remind = new_remind
     todo.repeat = new_repeat
     todo.deadline = new_deadline or ""
+    todo.visible = new_visible
     todo.next_remind = to_iso(next_remind)
     todo.next_repeat = to_iso(next_repeat)
     try:
@@ -299,7 +309,7 @@ async def list_todos(plugin, params, event):
     total = query.count()
     pages = max(1, (total + page_size - 1) // page_size)
     page = min(requested, pages)
-    items = list(query.order_by("id")
+    items = list(query.order_by("-visible", "id")
                  .offset((page - 1) * page_size)
                  .limit(page_size))
     return render.list_text(items, page=page, pages=pages, total=total)

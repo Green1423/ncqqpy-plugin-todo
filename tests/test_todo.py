@@ -472,6 +472,15 @@ async def test_ai_tools() -> None:
         check("tool add 写入 deadline", todo.deadline is not None,
               repr(todo.deadline))
 
+        text = await call_tool(reg.get("todo.add"), {
+            "title": "AI 隐藏", "visible": False,
+        }, ctx)
+        hidden = env.model().objects.filter(title="AI 隐藏").first()
+        check("tool add 写入 visible=false",
+              hidden is not None and hidden.visible is False, text)
+        listing = await call_tool(reg.get("todo.list"), {}, ctx)
+        check("tool list 标记隐藏项", "可见=否" in listing, listing)
+
         text = await call_tool(reg.get("todo.list"), {}, ctx)
         check("tool list 返回编号和截止",
               f"#{todo.pk}" in text and "截止=" in text, text)
@@ -537,6 +546,46 @@ async def test_show() -> None:
         check("show 不存在编号有提示", "没有待办" in text, text)
         text = await env.ask("/todo show")
         check("show 必须带编号", "用法不正确" in text, text)
+    finally:
+        await env.close()
+
+
+async def test_visible() -> None:
+    print("\n[4.0b] visible 排序 / 日报过滤")
+    env = Env(page_size=10)
+    try:
+        await env.start()
+        await env.ask("/todo add 可见A")
+        await env.ask("/todo add 隐藏B --visible=false")
+        await env.ask("/todo add 可见C")
+        text = await env.ask("/todo list")
+        check("visible=false 排在可见项后面",
+              text.index("#1") < text.index("#3") < text.index("#2"), text)
+        text = await env.ask("/todo show 2")
+        check("show 显示可见性", "可见：否" in text, text)
+
+        text = await env.ask("/todo set 2 --visible=true")
+        check("set visible=true", "可见：是" in text, text)
+        text = await env.ask("/todo list")
+        check("改回可见后按编号靠前",
+              text.index("#1") < text.index("#2") < text.index("#3"), text)
+        await env.ask("/todo set 2 --visible=false")
+        await env.ask("/todo check 2")
+
+        env.api.sent.clear()
+        await env.summary().send(env.plugin)
+        msg = env.api.sent[-1][2] if env.api.sent else ""
+        check("日报不统计隐藏完成项",
+              "今日完成 0 条" in msg and "未完成 2 条" in msg
+              and "#2" not in msg, msg)
+
+        await env.ask("/todo set 1 --visible=false")
+        env.api.sent.clear()
+        await env.summary().send(env.plugin)
+        msg = env.api.sent[-1][2] if env.api.sent else ""
+        check("日报不统计隐藏未完成项",
+              "未完成 1 条" in msg and "#3" in msg
+              and "#1" not in msg and "#2" not in msg, msg)
     finally:
         await env.close()
 
@@ -785,6 +834,8 @@ async def main() -> int:
     await test_pagination()
     await test_learn_syntax()
     await test_deadline_summary()
+    await test_show()
+    await test_visible()
     await test_ai_tools()
 
     print(f"\n{'=' * 44}\n通过 {PASSED} / 失败 {FAILED}")

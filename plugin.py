@@ -2,11 +2,11 @@
 
 核心设计
 --------
-* **6 个信息**：``id`` / ``title`` / ``content`` / ``remind`` / ``repeat`` /
-  ``deadline``。``remind`` 是提醒时间规则表达式（``false`` / 空 = 不提醒），
+* **7 个信息**：``id`` / ``title`` / ``content`` / ``remind`` / ``repeat`` /
+  ``deadline`` / ``visible``。``remind`` 是提醒时间规则表达式（``false`` / 空 = 不提醒），
   ``repeat`` 是重复时间规则表达式（``false`` / 空 = 不重复，``true`` = 同
   ``remind``），``deadline`` 是具体时间点（``DateTimeField``，与 ``repeat``
-  互斥，空 = 无截止）。
+  互斥，空 = 无截止）；``visible=false`` 不进入日报，列表中排在可见项之后。
 * **表达式内核**：直接使用 ``date_expr`` 的表达式语言（内置引擎的设计），
   因此“周期待办”不需要额外的
   cron 语法：``8h`` 是每天 08:00，``1w & {18h}`` 是每周一 18:00，

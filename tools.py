@@ -179,7 +179,7 @@ async def _list(plugin, args, ctx=None) -> str:
     total = query.count()
     pages = max(1, (total + page_size - 1) // page_size)
     page = min(page, pages)
-    items = list(query.order_by("id")
+    items = list(query.order_by("-visible", "id")
                  .offset((page - 1) * page_size)
                  .limit(page_size))
     if not items:
@@ -189,6 +189,8 @@ async def _list(plugin, args, ctx=None) -> str:
     for todo in items:
         state = "已完成" if todo.done else "未完成"
         parts = [f"#{todo.id}", f"[{state}]", render.clip(todo.title, 30)]
+        if not todo.visible:
+            parts.append("可见=否")
         deadline = todo.deadline if isinstance(todo.deadline, datetime) else None
         if deadline is not None:
             parts.append(f"截止={fmt_datetime(deadline, short=True)}")
@@ -216,7 +218,8 @@ def register(plugin) -> None:
         description=(
             "在当前会话添加一条待办。title 必填；content 是提醒文案；"
             "remind/repeat 用 learn 时间表达式（速查见工具提示）；"
-            "deadline 是具体时间，不是表达式，且与 repeat 互斥。"
+            "deadline 是具体时间，不是表达式，且与 repeat 互斥；"
+            "visible=false 不进入每日总结，列表中排在可见项后面。"
         ),
         parameters={
             "type": "object",
@@ -229,6 +232,8 @@ def register(plugin) -> None:
                            "description": "重复表达式，写法同 remind；repeat=true=同 remind；false/省略=不重复；与 deadline 互斥"},
                 "deadline": {"type": "string",
                              "description": "具体截止时间，如 2026-11-10 18:00；只写日期按当天结束；不是表达式；与 repeat 互斥"},
+                "visible": {"type": "boolean",
+                            "description": "是否显示在列表和每日总结；false=隐藏（仍会提醒），默认 true"},
             },
             "required": ["title"],
         },
@@ -286,7 +291,8 @@ def register(plugin) -> None:
         description=(
             "修改当前会话的一条待办。id 必填；只传要改的字段。"
             "remind/repeat 的写法与 todo_add 相同；"
-            "deadline 与 repeat 互斥；deadline 用具体时间，不是表达式。"
+            "deadline 与 repeat 互斥；deadline 用具体时间，不是表达式；"
+            "visible=false 不进入每日总结，列表中排在可见项后面。"
         ),
         parameters={
             "type": "object",
@@ -299,6 +305,8 @@ def register(plugin) -> None:
                 "repeat": {"type": "string", "description": "新重复表达式（写法同 todo_add）；false = 不重复；与 deadline 互斥"},
                 "deadline": {"type": "string",
                              "description": "新截止时间（具体时间，不是表达式）；false = 清除；与 repeat 互斥"},
+                "visible": {"type": "boolean",
+                            "description": "新的可见性；false=隐藏（仍会提醒），省略=不改"},
             },
             "required": ["id"],
         },

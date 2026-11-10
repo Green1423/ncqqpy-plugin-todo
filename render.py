@@ -58,7 +58,7 @@ def list_text(todos: list[Todo], *, page: int = 1, pages: int = 1,
 
 
 def detail_text(todo: Todo, *, verb: str = "已添加") -> str:
-    """单条回执（6 个信息 + 派生出的下一次时间）。"""
+    """单条回执（7 个信息 + 派生出的下一次时间）。"""
     lines = [
         f"✅ {verb}待办 #{todo.id}",
         f"标题：{todo.title or '待办'}",
@@ -69,6 +69,7 @@ def detail_text(todo: Todo, *, verb: str = "已添加") -> str:
     lines.append(f"重复规则：{todo.repeat or '不重复'}")
     deadline = _deadline(todo)
     lines.append("截止时间：" + (fmt_datetime(deadline) if deadline else "无"))
+    lines.append(f"可见：{'是' if todo.visible else '否'}")
     if todo.next_remind:
         lines.append(f"下次提醒：{fmt_datetime(todo.remind_at)}")
     if todo.next_repeat:
@@ -83,6 +84,7 @@ def show_text(todo: Todo) -> str:
         f"📋 待办 #{todo.id}",
         f"标题：{todo.title or '待办'}",
         f"状态：{'已完成' if todo.done else '未完成'}",
+        f"可见：{'是' if todo.visible else '否'}",
     ]
     lines.append("提醒文案：" + (todo.content or "（默认）"))
     lines.append(f"提醒规则：{todo.remind or '不提醒'}")
@@ -132,6 +134,7 @@ def reminder_text(todo: Todo, when, template: str) -> str:
 
 def summary_text(todos: list[Todo], moment) -> str:
     """当天完成情况日报；没有可报告的内容时返回空串。"""
+    todos = [todo for todo in todos if todo.visible]
     active = [todo for todo in todos if not todo.done]
     completed_today: list[Todo] = []
     for todo in todos:
